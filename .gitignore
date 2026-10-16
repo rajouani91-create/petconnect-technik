@@ -1,0 +1,13 @@
+node_modules/
+test-results/
+playwright-report/
+blob-report/
+.vitest/
+.claude/
+.impeccable/
+.agents/
+_to_delete/
+*.log
+.env
+.env.*
+*.local
