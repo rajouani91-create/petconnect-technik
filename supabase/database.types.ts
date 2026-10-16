@@ -14,6 +14,52 @@ export type Database = {
   }
   public: {
     Tables: {
+      appointments: {
+        Row: {
+          created_at: string
+          ends_at: string | null
+          id: string
+          kind: string
+          location: string | null
+          note: string | null
+          owner_id: string
+          pet_id: string
+          starts_at: string
+          status: string
+          title: string
+        }
+        Insert: {
+          created_at?: string
+          ends_at?: string | null
+          id?: string
+          kind?: string
+          location?: string | null
+          note?: string | null
+          owner_id?: string
+          pet_id: string
+          starts_at: string
+          status?: string
+          title: string
+        }
+        Update: {
+          ends_at?: string | null
+          kind?: string
+          location?: string | null
+          note?: string | null
+          starts_at?: string
+          status?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "appointments_pet_id_fkey"
+            columns: ["pet_id"]
+            isOneToOne: false
+            referencedRelation: "pets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       pet_documents: {
         Row: {
           category: string
@@ -233,6 +279,52 @@ export type Database = {
         }
         Relationships: []
       }
+      reminders: {
+        Row: {
+          created_at: string
+          done_at: string | null
+          due_on: string
+          id: string
+          kind: string
+          last_done_on: string | null
+          note: string | null
+          owner_id: string
+          pet_id: string
+          repeat_days: number | null
+          title: string
+        }
+        Insert: {
+          created_at?: string
+          done_at?: string | null
+          due_on: string
+          id?: string
+          kind?: string
+          last_done_on?: string | null
+          note?: string | null
+          owner_id?: string
+          pet_id: string
+          repeat_days?: number | null
+          title: string
+        }
+        Update: {
+          done_at?: string | null
+          due_on?: string
+          kind?: string
+          last_done_on?: string | null
+          note?: string | null
+          repeat_days?: number | null
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reminders_pet_id_fkey"
+            columns: ["pet_id"]
+            isOneToOne: false
+            referencedRelation: "pets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       routine_done: {
         Row: {
           created_at: string
@@ -391,6 +483,22 @@ export type Database = {
     }
     Functions: {
       accept_pet_invite: { Args: { p_token: string }; Returns: string[] }
+      complete_reminder: {
+        Args: { p_done_on?: string; p_id: string }
+        Returns: {
+          created_at: string
+          done_at: string | null
+          due_on: string
+          id: string
+          kind: string
+          last_done_on: string | null
+          note: string | null
+          owner_id: string
+          pet_id: string
+          repeat_days: number | null
+          title: string
+        }
+      }
       create_pet_invite: {
         Args: { p_name: string; p_pet_ids: string[]; p_role: string }
         Returns: {

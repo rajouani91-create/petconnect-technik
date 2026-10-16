@@ -7,6 +7,7 @@
  *  - Fotos im privaten Bucket pet-photos, Pfad <pet_id>/<datei>
  *  - Tierakte: weights, vaccinations (Praxis-Einträge unveränderbar), pet_documents + privater Bucket pet-documents
  *    (PDF/JPEG/PNG/WebP, höchstens 10 MB, kein Überschreiben); nachträglich änderbar nur title, category, doc_date
+ *  - Termine (appointments) und Erinnerungen (reminders) mit RPC complete_reminder; pet_id nachträglich nicht änderbar
  *  - Unique-Regeln, Löschen mit Kaskade, Uhrzeiten als "HH:MM:SS"
  */
 import type { BrowserContext, Page, Route } from '@playwright/test';
@@ -25,7 +26,7 @@ class HttpError extends Error { constructor(public status: number, public code: 
 export class FakeSupabase {
   users: User[] = [];
   tokens = new Map<string, string>(); // access_token → user id
-  db: Record<string, Row[]> = { profiles: [], pets: [], pet_members: [], pet_invites: [], pet_invite_pets: [], routine_items: [], routine_done: [], weights: [], vaccinations: [], pet_documents: [] };
+  db: Record<string, Row[]> = { profiles: [], pets: [], pet_members: [], pet_invites: [], pet_invite_pets: [], routine_items: [], routine_done: [], weights: [], vaccinations: [], pet_documents: [], appointments: [], reminders: [] };
   files = new Map<string, { bytes: Buffer; type: string }>(); // "pet-photos/<pet>/<datei>"
   calls: { method: string; path: string; body?: unknown }[] = [];
   /** Nächste Anfrage an diese Tabelle schlägt fehl (Fehlerpfad testen) */
@@ -65,7 +66,7 @@ export class FakeSupabase {
     switch (table) {
       case 'profiles': return r.id === uid || this.sharesPet(uid, String(r.id));
       case 'pets': return r.owner_id === uid || this.member(r.id, uid);
-      case 'pet_members': case 'routine_items': case 'weights': case 'vaccinations': case 'pet_documents': return this.member(r.pet_id, uid);
+      case 'pet_members': case 'routine_items': case 'weights': case 'vaccinations': case 'pet_documents': case 'appointments': case 'reminders': return this.member(r.pet_id, uid);
       case 'routine_done': return this.member(this.itemPet(r.routine_item_id), uid);
       case 'pet_invites': return r.created_by === uid;
       case 'pet_invite_pets': return this.db.pet_invites!.some((i) => i.id === r.invite_id && i.created_by === uid);
@@ -82,6 +83,11 @@ export class FakeSupabase {
       case 'vaccinations':
         if ('source' in patch && patch.source !== 'owner') return false;
         return this.editor(r.pet_id, uid) && r.source === 'owner';
+      case 'appointments': case 'reminders': {
+        const allowed = table === 'appointments' ? ['title', 'kind', 'starts_at', 'ends_at', 'location', 'note', 'status'] : ['title', 'kind', 'due_on', 'repeat_days', 'note', 'last_done_on', 'done_at'];
+        if (Object.keys(patch).some((k) => !allowed.includes(k))) throw new HttpError(403, '42501', `permission denied for table ${table}`);
+        return this.editor(r.pet_id, uid);
+      }
       case 'pet_documents':
         // Spaltenrechte: nur title, category, doc_date
         if (Object.keys(patch).some((k) => !['title', 'category', 'doc_date'].includes(k))) throw new HttpError(403, '42501', 'permission denied for table pet_documents');
@@ -98,7 +104,7 @@ export class FakeSupabase {
       case 'pets': return this.owner(r.id, uid);
       case 'routine_items': case 'weights': return this.editor(r.pet_id, uid);
       case 'vaccinations': return this.editor(r.pet_id, uid) && r.source === 'owner';
-      case 'pet_documents': return this.editor(r.pet_id, uid);
+      case 'pet_documents': case 'appointments': case 'reminders': return this.editor(r.pet_id, uid);
       case 'routine_done': return this.editor(this.itemPet(r.routine_item_id), uid);
       case 'pet_members': return r.role !== 'owner' && (r.user_id === uid || this.owner(r.pet_id, uid));
       case 'pet_invites': return r.created_by === uid;
@@ -110,7 +116,7 @@ export class FakeSupabase {
       case 'pets': return r.owner_id === uid;
       case 'routine_items': case 'weights': return r.owner_id === uid && this.editor(r.pet_id, uid);
       case 'vaccinations': return r.owner_id === uid && r.source === 'owner' && this.editor(r.pet_id, uid);
-      case 'pet_documents': return r.owner_id === uid && this.editor(r.pet_id, uid);
+      case 'pet_documents': case 'appointments': case 'reminders': return r.owner_id === uid && this.editor(r.pet_id, uid);
       case 'routine_done': return r.owner_id === uid && this.editor(this.itemPet(r.routine_item_id), uid);
       default: return false; // profiles, pet_members, pet_invites, pet_invite_pets: nur über Trigger/RPC
     }
@@ -203,6 +209,17 @@ export class FakeSupabase {
   }
   private rpc(fn: string, a: Row, uid: string): unknown {
     const fail = (m: string, status = 400, code = 'P0001') => { throw new HttpError(status, code, m); };
+    if (fn === 'complete_reminder') {
+      const doneOn = String(a.p_done_on ?? this.today);
+      const plus = (iso: string, n: number) => { const [y, m, d] = iso.split('-').map(Number) as [number, number, number]; return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };
+      if (doneOn > plus(this.today, 1)) fail('reminder_future');
+      const r = this.db.reminders!.find((x) => x.id === a.p_id && this.member(x.pet_id, uid));
+      if (!r) fail('reminder_not_found', 404, 'P0002');
+      if (!this.editor(r!.pet_id, uid)) fail('reminder_not_allowed', 403, '42501');
+      if (r!.repeat_days == null) Object.assign(r!, { last_done_on: doneOn, done_at: new Date().toISOString() });
+      else Object.assign(r!, { last_done_on: doneOn, due_on: plus(doneOn, Number(r!.repeat_days)), done_at: null });
+      return r;
+    }
     if (fn === 'create_pet_invite') {
       const name = String(a.p_name ?? '').trim(); const role = String(a.p_role); const pets = (a.p_pet_ids ?? []) as string[];
       if (name.length < 1 || name.length > 60) fail('invite_name');
@@ -448,6 +465,8 @@ export class FakeSupabase {
     if (table === 'weights') base.measured_on = this.today;
     if (table === 'vaccinations') Object.assign(base, { source: 'owner', given_on: null, valid_until: null });
     if (table === 'pet_documents') Object.assign(base, { category: 'other', doc_date: null });
+    if (table === 'appointments') Object.assign(base, { kind: 'vet', ends_at: null, location: null, note: null, status: 'planned' });
+    if (table === 'reminders') Object.assign(base, { kind: 'other', repeat_days: null, note: null, last_done_on: null, done_at: null });
     return this.normalize(table, { ...base, ...input });
   }
   private violates(table: string, r: Row, self?: Row): string | 'dup' | null {
@@ -483,13 +502,31 @@ export class FakeSupabase {
       if (String(r.storage_path).split('/')[0] !== String(r.pet_id)) return 'pet_documents_path_check';
       if (this.db.pet_documents!.some((x) => x !== self && x.storage_path === r.storage_path)) return 'dup';
     }
+    if (table === 'appointments') {
+      const t = String(r.title ?? '').trim();
+      if (t.length < 1 || t.length > 120) return 'appointments_title_check';
+      if (!['vet', 'vaccination', 'grooming', 'training', 'other'].includes(String(r.kind))) return 'appointments_kind_check';
+      if (!['planned', 'done', 'cancelled'].includes(String(r.status))) return 'appointments_status_check';
+      if (Number.isNaN(Date.parse(String(r.starts_at)))) return 'appointments_starts_at';
+      if (r.ends_at != null && !(Date.parse(String(r.ends_at)) > Date.parse(String(r.starts_at)))) return 'appointments_end_check';
+      if (r.location != null && String(r.location).length > 200) return 'appointments_location_check';
+      if (r.note != null && String(r.note).length > 1000) return 'appointments_note_check';
+    }
+    if (table === 'reminders') {
+      const t = String(r.title ?? '').trim();
+      if (t.length < 1 || t.length > 120) return 'reminders_title_check';
+      if (!['deworming', 'flea_tick', 'medication', 'vaccination', 'checkup', 'grooming', 'other'].includes(String(r.kind))) return 'reminders_kind_check';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(r.due_on))) return 'reminders_due_on';
+      if (r.repeat_days != null && !(Number.isInteger(r.repeat_days) && Number(r.repeat_days) >= 1 && Number(r.repeat_days) <= 3650)) return 'reminders_repeat_days_check';
+      if (r.note != null && String(r.note).length > 1000) return 'reminders_note_check';
+    }
     if (table === 'routine_done' && this.db.routine_done!.some((x) => x.routine_item_id === r.routine_item_id && x.done_on === r.done_on)) return 'dup';
     return null;
   }
   private cascadeDelete(table: string, r: Row) {
     this.db[table] = this.db[table]!.filter((x) => x !== r);
     if (table === 'pets') {
-      for (const t of ['routine_items', 'weights', 'vaccinations', 'pet_documents', 'pet_members', 'pet_invite_pets']) for (const c of this.db[t]!.filter((x) => x.pet_id === r.id)) this.cascadeDelete(t, c);
+      for (const t of ['routine_items', 'weights', 'vaccinations', 'pet_documents', 'appointments', 'reminders', 'pet_members', 'pet_invite_pets']) for (const c of this.db[t]!.filter((x) => x.pet_id === r.id)) this.cascadeDelete(t, c);
     }
     if (table === 'routine_items') this.db.routine_done = this.db.routine_done!.filter((x) => x.routine_item_id !== r.id);
     if (table === 'pet_invites') this.db.pet_invite_pets = this.db.pet_invite_pets!.filter((x) => x.invite_id !== r.id);

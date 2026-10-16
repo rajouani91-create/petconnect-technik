@@ -371,10 +371,14 @@ test.describe('Tier, Mehr, Notfall, Termine', () => {
     await expect(page).toHaveURL(/\/login$/);
   });
 
-  test('Termine zeigt den Platzhalter', async ({ page }) => {
+  // Seit Auftrag 06 ersetzt die Termin-Seite den Platzhalter (Details in termine.e2e.ts)
+  test('Termine zeigt ohne Einträge den leeren Zustand und „Termin eintragen“', async ({ page }) => {
     await withDog(page);
     await page.getByRole('navigation', { name: 'Hauptnavigation' }).getByRole('link', { name: 'Termine' }).click();
-    await expect(page.getByText('Kommt bald: Termine bei Ihrer Praxis')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Termine', level: 1 })).toBeVisible();
+    await expect(page.getByText('Keine Termine geplant.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Termin eintragen' })).toBeVisible();
+    await expect(page.getByText('Kommt bald: Termine bei Ihrer Praxis')).toHaveCount(0);
   });
 });
 
