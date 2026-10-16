@@ -8,6 +8,8 @@
  *  - Tierakte: weights, vaccinations (Praxis-Einträge unveränderbar), pet_documents + privater Bucket pet-documents
  *    (PDF/JPEG/PNG/WebP, höchstens 10 MB, kein Überschreiben); nachträglich änderbar nur title, category, doc_date
  *  - Termine (appointments) und Erinnerungen (reminders) mit RPC complete_reminder; pet_id nachträglich nicht änderbar
+ *  - Notfallkarte (pets.vet_name/vet_phone/owner_phone), Versicherungen + Einreichungen, Sitter-Zugänge (nur owner/carer)
+ *    und RPC sitter_view, die auch ohne Anmeldung (anon) aufrufbar ist
  *  - Unique-Regeln, Löschen mit Kaskade, Uhrzeiten als "HH:MM:SS"
  */
 import type { BrowserContext, Page, Route } from '@playwright/test';
@@ -26,7 +28,7 @@ class HttpError extends Error { constructor(public status: number, public code: 
 export class FakeSupabase {
   users: User[] = [];
   tokens = new Map<string, string>(); // access_token → user id
-  db: Record<string, Row[]> = { profiles: [], pets: [], pet_members: [], pet_invites: [], pet_invite_pets: [], routine_items: [], routine_done: [], weights: [], vaccinations: [], pet_documents: [], appointments: [], reminders: [] };
+  db: Record<string, Row[]> = { profiles: [], pets: [], pet_members: [], pet_invites: [], pet_invite_pets: [], routine_items: [], routine_done: [], weights: [], vaccinations: [], pet_documents: [], appointments: [], reminders: [], pet_insurances: [], insurance_claims: [], sitter_access: [] };
   files = new Map<string, { bytes: Buffer; type: string }>(); // "pet-photos/<pet>/<datei>"
   calls: { method: string; path: string; body?: unknown }[] = [];
   /** Nächste Anfrage an diese Tabelle schlägt fehl (Fehlerpfad testen) */
@@ -66,7 +68,8 @@ export class FakeSupabase {
     switch (table) {
       case 'profiles': return r.id === uid || this.sharesPet(uid, String(r.id));
       case 'pets': return r.owner_id === uid || this.member(r.id, uid);
-      case 'pet_members': case 'routine_items': case 'weights': case 'vaccinations': case 'pet_documents': case 'appointments': case 'reminders': return this.member(r.pet_id, uid);
+      case 'pet_members': case 'routine_items': case 'weights': case 'vaccinations': case 'pet_documents': case 'appointments': case 'reminders': case 'pet_insurances': case 'insurance_claims': return this.member(r.pet_id, uid);
+      case 'sitter_access': return this.editor(r.pet_id, uid);
       case 'routine_done': return this.member(this.itemPet(r.routine_item_id), uid);
       case 'pet_invites': return r.created_by === uid;
       case 'pet_invite_pets': return this.db.pet_invites!.some((i) => i.id === r.invite_id && i.created_by === uid);
@@ -83,6 +86,13 @@ export class FakeSupabase {
       case 'vaccinations':
         if ('source' in patch && patch.source !== 'owner') return false;
         return this.editor(r.pet_id, uid) && r.source === 'owner';
+      case 'pet_insurances': case 'insurance_claims': case 'sitter_access': {
+        const allowed = table === 'pet_insurances' ? ['insurer', 'policy_no', 'holder_name', 'deductible', 'reimbursement_pct', 'submission', 'note']
+          : table === 'insurance_claims' ? ['title', 'amount', 'claim_date', 'status', 'reimbursed_amount', 'document_id', 'note']
+          : ['sitter_name', 'valid_from', 'valid_to', 'feeding', 'care_notes', 'revoked_at'];
+        if (Object.keys(patch).some((k) => !allowed.includes(k))) throw new HttpError(403, '42501', `permission denied for table ${table}`);
+        return this.editor(r.pet_id, uid);
+      }
       case 'appointments': case 'reminders': {
         const allowed = table === 'appointments' ? ['title', 'kind', 'starts_at', 'ends_at', 'location', 'note', 'status'] : ['title', 'kind', 'due_on', 'repeat_days', 'note', 'last_done_on', 'done_at'];
         if (Object.keys(patch).some((k) => !allowed.includes(k))) throw new HttpError(403, '42501', `permission denied for table ${table}`);
@@ -104,7 +114,7 @@ export class FakeSupabase {
       case 'pets': return this.owner(r.id, uid);
       case 'routine_items': case 'weights': return this.editor(r.pet_id, uid);
       case 'vaccinations': return this.editor(r.pet_id, uid) && r.source === 'owner';
-      case 'pet_documents': case 'appointments': case 'reminders': return this.editor(r.pet_id, uid);
+      case 'pet_documents': case 'appointments': case 'reminders': case 'pet_insurances': case 'insurance_claims': case 'sitter_access': return this.editor(r.pet_id, uid);
       case 'routine_done': return this.editor(this.itemPet(r.routine_item_id), uid);
       case 'pet_members': return r.role !== 'owner' && (r.user_id === uid || this.owner(r.pet_id, uid));
       case 'pet_invites': return r.created_by === uid;
@@ -116,7 +126,7 @@ export class FakeSupabase {
       case 'pets': return r.owner_id === uid;
       case 'routine_items': case 'weights': return r.owner_id === uid && this.editor(r.pet_id, uid);
       case 'vaccinations': return r.owner_id === uid && r.source === 'owner' && this.editor(r.pet_id, uid);
-      case 'pet_documents': case 'appointments': case 'reminders': return r.owner_id === uid && this.editor(r.pet_id, uid);
+      case 'pet_documents': case 'appointments': case 'reminders': case 'pet_insurances': case 'insurance_claims': case 'sitter_access': return r.owner_id === uid && this.editor(r.pet_id, uid);
       case 'routine_done': return r.owner_id === uid && this.editor(this.itemPet(r.routine_item_id), uid);
       default: return false; // profiles, pet_members, pet_invites, pet_invite_pets: nur über Trigger/RPC
     }
@@ -187,6 +197,7 @@ export class FakeSupabase {
 
     try {
       if (url.pathname.startsWith('/storage/v1/')) return await this.storage(route, url, method, uid, body);
+      if (url.pathname === '/rest/v1/rpc/sitter_view') return json(200, this.sitterView(String(((body ?? {}) as Row).p_token ?? '')));
       if (url.pathname.startsWith('/rest/v1/rpc/')) {
         if (!uid) return json(401, { code: '42501', message: 'permission denied' });
         return json(200, this.rpc(url.pathname.slice(13), (body ?? {}) as Row, uid));
@@ -198,6 +209,22 @@ export class FakeSupabase {
       return json(500, { code: 'FAKE', message: String(e) });
     }
     return route.fulfill({ status: 404, body: 'nicht simuliert' });
+  }
+
+  /** Öffentliche Sitter-Ansicht wie public.sitter_view (heute = this.today, Zeitzone Europe/Berlin) */
+  sitterView(token: string): Row {
+    if (token.length !== 64) return { status: 'not_found' };
+    const a = this.db.sitter_access!.find((x) => x.token === token);
+    if (!a) return { status: 'not_found' };
+    if (a.revoked_at) return { status: 'revoked' };
+    if (this.today > String(a.valid_to)) return { status: 'expired' };
+    const p = this.db.pets!.find((x) => x.id === a.pet_id)!;
+    if (p.deceased) return { status: 'revoked' };
+    if (this.today < String(a.valid_from)) return { status: 'not_yet', valid_from: a.valid_from, pet_name: p.name };
+    const owner = this.db.profiles!.find((x) => x.id === p.owner_id)?.display_name ?? null;
+    return { status: 'ok', sitter_name: a.sitter_name, valid_from: a.valid_from, valid_to: a.valid_to, feeding: a.feeding, care_notes: a.care_notes,
+      pet: { name: p.name, species: p.species, species_other: p.species_other, breed: p.breed, chip_no: p.chip_no, allergies: p.allergies, medications: p.medications, deceased: p.deceased },
+      owner_name: owner, owner_phone: p.owner_phone, emergency_contact: p.emergency_contact, vet_name: p.vet_name, vet_phone: p.vet_phone };
   }
 
   // ---------- RPC ----------
@@ -459,7 +486,10 @@ export class FakeSupabase {
     const now = new Date().toISOString();
     const base: Row = { id: randomUUID(), created_at: now };
     if (!['profiles', 'pet_members', 'pet_invite_pets'].includes(table)) base.owner_id = uid;
-    if (table === 'pets') Object.assign(base, { deceased: false, updated_at: now, species_other: null, breed: null, sex: null, birth_date: null, chip_no: null, cat_outdoor: null, stable: null, allergies: null, medications: null, emergency_contact: null, photo_path: null });
+    if (table === 'pets') Object.assign(base, { deceased: false, updated_at: now, species_other: null, breed: null, sex: null, birth_date: null, chip_no: null, cat_outdoor: null, stable: null, allergies: null, medications: null, emergency_contact: null, photo_path: null, vet_name: null, vet_phone: null, owner_phone: null });
+    if (table === 'pet_insurances') Object.assign(base, { holder_name: null, deductible: null, reimbursement_pct: null, submission: null, note: null });
+    if (table === 'insurance_claims') Object.assign(base, { claim_date: this.today, status: 'open', reimbursed_amount: null, document_id: null, note: null });
+    if (table === 'sitter_access') Object.assign(base, { feeding: null, care_notes: null, revoked_at: null, token: (randomUUID() + randomUUID()).replace(/-/g, '') });
     if (table === 'routine_items') Object.assign(base, { repeat: 'daily', reminder_on: true, label: null });
     if (table === 'routine_done') base.done_on = this.today;
     if (table === 'weights') base.measured_on = this.today;
@@ -502,6 +532,38 @@ export class FakeSupabase {
       if (String(r.storage_path).split('/')[0] !== String(r.pet_id)) return 'pet_documents_path_check';
       if (this.db.pet_documents!.some((x) => x !== self && x.storage_path === r.storage_path)) return 'dup';
     }
+    if (table === 'pets') {
+      if (r.vet_name != null && String(r.vet_name).length > 120) return 'pets_vet_name_check';
+      if (r.vet_phone != null && String(r.vet_phone).length > 40) return 'pets_vet_phone_check';
+      if (r.owner_phone != null && String(r.owner_phone).length > 40) return 'pets_owner_phone_check';
+    }
+    if (table === 'pet_insurances') {
+      const ins = String(r.insurer ?? '').trim(); const pol = String(r.policy_no ?? '').trim();
+      if (ins.length < 1 || ins.length > 120) return 'pet_insurances_insurer_check';
+      if (pol.length < 1 || pol.length > 60) return 'pet_insurances_policy_no_check';
+      if (r.deductible != null && !(Number(r.deductible) >= 0 && Number(r.deductible) < 100000)) return 'pet_insurances_deductible_check';
+      if (r.reimbursement_pct != null && !(Number.isInteger(r.reimbursement_pct) && Number(r.reimbursement_pct) >= 0 && Number(r.reimbursement_pct) <= 100)) return 'pet_insurances_pct_check';
+      if (r.submission != null && !['portal', 'email', 'post', 'app', 'other'].includes(String(r.submission))) return 'pet_insurances_submission_check';
+      if (r.note != null && String(r.note).length > 500) return 'pet_insurances_note_check';
+    }
+    if (table === 'insurance_claims') {
+      const t = String(r.title ?? '').trim();
+      if (t.length < 1 || t.length > 120) return 'insurance_claims_title_check';
+      if (!(Number(r.amount) > 0 && Number(r.amount) < 100000)) return 'insurance_claims_amount_check';
+      if (!['open', 'submitted', 'query', 'partial', 'reimbursed', 'rejected'].includes(String(r.status))) return 'insurance_claims_status_check';
+      if (r.reimbursed_amount != null && !(Number(r.reimbursed_amount) >= 0 && Number(r.reimbursed_amount) <= Number(r.amount))) return 'insurance_claims_reimbursed_check';
+      if (!this.db.pet_insurances!.some((i) => i.id === r.insurance_id && i.pet_id === r.pet_id)) return 'insurance_claims_insurance_fkey';
+      if (r.document_id != null && !this.db.pet_documents!.some((d) => d.id === r.document_id && d.pet_id === r.pet_id)) return 'claim_doc_pet';
+    }
+    if (table === 'sitter_access') {
+      const n = String(r.sitter_name ?? '').trim();
+      if (n.length < 1 || n.length > 80) return 'sitter_access_name_check';
+      const from = String(r.valid_from); const to = String(r.valid_to);
+      const days = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 864e5;
+      if (!(days >= 0 && days <= 92)) return 'sitter_access_dates';
+      if (r.feeding != null && String(r.feeding).length > 2000) return 'sitter_access_feeding_check';
+      if (r.care_notes != null && String(r.care_notes).length > 2000) return 'sitter_access_care_check';
+    }
     if (table === 'appointments') {
       const t = String(r.title ?? '').trim();
       if (t.length < 1 || t.length > 120) return 'appointments_title_check';
@@ -526,9 +588,11 @@ export class FakeSupabase {
   private cascadeDelete(table: string, r: Row) {
     this.db[table] = this.db[table]!.filter((x) => x !== r);
     if (table === 'pets') {
-      for (const t of ['routine_items', 'weights', 'vaccinations', 'pet_documents', 'appointments', 'reminders', 'pet_members', 'pet_invite_pets']) for (const c of this.db[t]!.filter((x) => x.pet_id === r.id)) this.cascadeDelete(t, c);
+      for (const t of ['routine_items', 'weights', 'vaccinations', 'insurance_claims', 'pet_insurances', 'sitter_access', 'pet_documents', 'appointments', 'reminders', 'pet_members', 'pet_invite_pets']) for (const c of this.db[t]!.filter((x) => x.pet_id === r.id)) this.cascadeDelete(t, c);
     }
     if (table === 'routine_items') this.db.routine_done = this.db.routine_done!.filter((x) => x.routine_item_id !== r.id);
     if (table === 'pet_invites') this.db.pet_invite_pets = this.db.pet_invite_pets!.filter((x) => x.invite_id !== r.id);
+    if (table === 'pet_documents') for (const c of this.db.insurance_claims!) if (c.document_id === r.id) c.document_id = null;
+    if (table === 'pet_insurances') this.db.insurance_claims = this.db.insurance_claims!.filter((c) => c.insurance_id !== r.id);
   }
 }

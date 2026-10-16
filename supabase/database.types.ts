@@ -60,6 +60,61 @@ export type Database = {
           },
         ]
       }
+      insurance_claims: {
+        Row: {
+          amount: number
+          claim_date: string
+          created_at: string
+          document_id: string | null
+          id: string
+          insurance_id: string
+          note: string | null
+          owner_id: string
+          pet_id: string
+          reimbursed_amount: number | null
+          status: string
+          title: string
+        }
+        Insert: {
+          amount: number
+          claim_date?: string
+          created_at?: string
+          document_id?: string | null
+          id?: string
+          insurance_id: string
+          note?: string | null
+          owner_id?: string
+          pet_id: string
+          reimbursed_amount?: number | null
+          status?: string
+          title: string
+        }
+        Update: {
+          amount?: number
+          claim_date?: string
+          document_id?: string | null
+          note?: string | null
+          reimbursed_amount?: number | null
+          status?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "insurance_claims_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "pet_documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "insurance_claims_insurance_id_pet_id_fkey"
+            columns: ["insurance_id"]
+            isOneToOne: false
+            referencedRelation: "pet_insurances"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       pet_documents: {
         Row: {
           category: string
@@ -93,6 +148,52 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "pet_documents_pet_id_fkey"
+            columns: ["pet_id"]
+            isOneToOne: false
+            referencedRelation: "pets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pet_insurances: {
+        Row: {
+          created_at: string
+          deductible: number | null
+          holder_name: string | null
+          id: string
+          insurer: string
+          note: string | null
+          owner_id: string
+          pet_id: string
+          policy_no: string
+          reimbursement_pct: number | null
+          submission: string | null
+        }
+        Insert: {
+          created_at?: string
+          deductible?: number | null
+          holder_name?: string | null
+          id?: string
+          insurer: string
+          note?: string | null
+          owner_id?: string
+          pet_id: string
+          policy_no: string
+          reimbursement_pct?: number | null
+          submission?: string | null
+        }
+        Update: {
+          deductible?: number | null
+          holder_name?: string | null
+          insurer?: string
+          note?: string | null
+          policy_no?: string
+          reimbursement_pct?: number | null
+          submission?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pet_insurances_pet_id_fkey"
             columns: ["pet_id"]
             isOneToOne: false
             referencedRelation: "pets"
@@ -208,6 +309,7 @@ export type Database = {
           id: string
           medications: string | null
           name: string
+          owner_phone: string | null
           owner_id: string
           photo_path: string | null
           sex: string | null
@@ -215,6 +317,8 @@ export type Database = {
           species_other: string | null
           stable: string | null
           updated_at: string
+          vet_name: string | null
+          vet_phone: string | null
         }
         Insert: {
           allergies?: string | null
@@ -228,6 +332,7 @@ export type Database = {
           id?: string
           medications?: string | null
           name: string
+          owner_phone?: string | null
           owner_id?: string
           photo_path?: string | null
           sex?: string | null
@@ -235,6 +340,8 @@ export type Database = {
           species_other?: string | null
           stable?: string | null
           updated_at?: string
+          vet_name?: string | null
+          vet_phone?: string | null
         }
         Update: {
           allergies?: string | null
@@ -248,6 +355,7 @@ export type Database = {
           id?: string
           medications?: string | null
           name?: string
+          owner_phone?: string | null
           owner_id?: string
           photo_path?: string | null
           sex?: string | null
@@ -255,6 +363,8 @@ export type Database = {
           species_other?: string | null
           stable?: string | null
           updated_at?: string
+          vet_name?: string | null
+          vet_phone?: string | null
         }
         Relationships: []
       }
@@ -401,6 +511,51 @@ export type Database = {
           },
         ]
       }
+      sitter_access: {
+        Row: {
+          care_notes: string | null
+          created_at: string
+          feeding: string | null
+          id: string
+          owner_id: string
+          pet_id: string
+          revoked_at: string | null
+          sitter_name: string
+          token: string
+          valid_from: string
+          valid_to: string
+        }
+        Insert: {
+          care_notes?: string | null
+          created_at?: string
+          feeding?: string | null
+          id?: string
+          owner_id?: string
+          pet_id: string
+          revoked_at?: string | null
+          sitter_name: string
+          token?: string
+          valid_from: string
+          valid_to: string
+        }
+        Update: {
+          care_notes?: string | null
+          feeding?: string | null
+          revoked_at?: string | null
+          sitter_name?: string
+          valid_from?: string
+          valid_to?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sitter_access_pet_id_fkey"
+            columns: ["pet_id"]
+            isOneToOne: false
+            referencedRelation: "pets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vaccinations: {
         Row: {
           created_at: string
@@ -508,6 +663,7 @@ export type Database = {
         }[]
       }
       invite_preview: { Args: { p_token: string }; Returns: Json }
+      sitter_view: { Args: { p_token: string }; Returns: Json }
     }
     Enums: {
       [_ in never]: never
