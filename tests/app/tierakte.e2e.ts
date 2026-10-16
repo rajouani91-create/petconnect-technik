@@ -462,6 +462,8 @@ test.describe('Leere Zustände und Tastatur', () => {
     await expect(tab(p, 'Dokumente')).toBeFocused();
     await p.keyboard.press('Home');
     await expect(tab(p, 'Gewicht')).toBeFocused();
+    // Reiter lädt seine Daten neu: erst weiter, wenn die Messung da ist (sonst springt Tab am Ladekreis vorbei)
+    await expect(rows(p)).toHaveCount(1);
     // Gewicht eintragen
     await p.keyboard.press('Tab');
     await expect(panel(p).getByRole('button', { name: 'Gewicht eintragen' })).toBeFocused();
