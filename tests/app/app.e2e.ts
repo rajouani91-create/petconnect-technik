@@ -218,7 +218,8 @@ test.describe('Alltag', () => {
   test.beforeEach(async ({ page }) => {
     const fake = await withDog(page);
     (page as unknown as { fake: FakeSupabase }).fake = fake;
-    await page.getByRole('navigation', { name: 'Hauptnavigation' }).getByRole('link', { name: 'Alltag' }).click();
+    await page.getByRole('navigation', { name: 'Hauptnavigation' }).getByRole('link', { name: 'Mehr' }).click();
+    await page.locator('#main').getByRole('link', { name: 'Alltag', exact: true }).click(); // seit Auftrag 08 unter „Mehr“
     await expect(page.getByRole('heading', { name: 'Alltag', level: 1 })).toBeVisible();
   });
   const fakeOf = (page: Page) => (page as unknown as { fake: FakeSupabase }).fake;

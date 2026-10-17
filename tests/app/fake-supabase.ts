@@ -10,6 +10,8 @@
  *  - Termine (appointments) und Erinnerungen (reminders) mit RPC complete_reminder; pet_id nachträglich nicht änderbar
  *  - Notfallkarte (pets.vet_name/vet_phone/owner_phone), Versicherungen + Einreichungen, Sitter-Zugänge (nur owner/carer)
  *    und RPC sitter_view, die auch ohne Anmeldung (anon) aufrufbar ist
+ *  - Praxissuche: practices (nur aktive lesbar), practice_profiles, postal_codes, eigene Favoriten und Einladungswünsche,
+ *    RPC geocode_place und search_practices (Haversine, Umkreis max. 100 km, matches nur mit Profil)
  *  - Unique-Regeln, Löschen mit Kaskade, Uhrzeiten als "HH:MM:SS"
  */
 import type { BrowserContext, Page, Route } from '@playwright/test';
@@ -28,7 +30,7 @@ class HttpError extends Error { constructor(public status: number, public code: 
 export class FakeSupabase {
   users: User[] = [];
   tokens = new Map<string, string>(); // access_token → user id
-  db: Record<string, Row[]> = { profiles: [], pets: [], pet_members: [], pet_invites: [], pet_invite_pets: [], routine_items: [], routine_done: [], weights: [], vaccinations: [], pet_documents: [], appointments: [], reminders: [], pet_insurances: [], insurance_claims: [], sitter_access: [] };
+  db: Record<string, Row[]> = { profiles: [], pets: [], pet_members: [], pet_invites: [], pet_invite_pets: [], routine_items: [], routine_done: [], weights: [], vaccinations: [], pet_documents: [], appointments: [], reminders: [], pet_insurances: [], insurance_claims: [], sitter_access: [], practices: [], practice_profiles: [], postal_codes: [], practice_favorites: [], practice_invite_requests: [] };
   files = new Map<string, { bytes: Buffer; type: string }>(); // "pet-photos/<pet>/<datei>"
   calls: { method: string; path: string; body?: unknown }[] = [];
   /** Nächste Anfrage an diese Tabelle schlägt fehl (Fehlerpfad testen) */
@@ -52,6 +54,14 @@ export class FakeSupabase {
     return p;
   }
   addMember(petId: unknown, u: User, role: 'carer' | 'viewer') { this.db.pet_members!.push({ pet_id: petId, user_id: u.id, role, created_at: new Date().toISOString() }); }
+  /** Praxis (OSM-Grunddaten) mit optionalem Profil anlegen – nur für Tests */
+  seedPractice(fields: Row, profile?: Row): Row {
+    const row: Row = { id: randomUUID(), source: 'osm', name: 'Praxis', street: null, housenumber: null, postcode: null, city: null, lat: 0, lon: 0, phone: null, website: null, email: null, opening_hours: null, registered: false, active: true, ...fields };
+    this.db.practices!.push(row);
+    if (profile) this.db.practice_profiles!.push({ practice_id: row.id, species: [], services: [], titles: [], focus: [], titles_verified: false, ...profile });
+    return row;
+  }
+  seedPostcode(postcode: string, place: string, lat: number, lon: number) { this.db.postal_codes!.push({ postcode, place, lat, lon }); }
   /** Zeilen, die ein Nutzer sehen würde (ohne uid: alle) */
   rows(table: string, uid?: string) { return uid ? this.db[table]!.filter((r) => this.canSee(table, r, uid)) : this.db[table]!; }
 
@@ -70,6 +80,9 @@ export class FakeSupabase {
       case 'pets': return r.owner_id === uid || this.member(r.id, uid);
       case 'pet_members': case 'routine_items': case 'weights': case 'vaccinations': case 'pet_documents': case 'appointments': case 'reminders': case 'pet_insurances': case 'insurance_claims': return this.member(r.pet_id, uid);
       case 'sitter_access': return this.editor(r.pet_id, uid);
+      case 'practices': return r.active === true;
+      case 'practice_profiles': case 'postal_codes': return true;
+      case 'practice_favorites': case 'practice_invite_requests': return r.user_id === uid;
       case 'routine_done': return this.member(this.itemPet(r.routine_item_id), uid);
       case 'pet_invites': return r.created_by === uid;
       case 'pet_invite_pets': return this.db.pet_invites!.some((i) => i.id === r.invite_id && i.created_by === uid);
@@ -118,6 +131,7 @@ export class FakeSupabase {
       case 'routine_done': return this.editor(this.itemPet(r.routine_item_id), uid);
       case 'pet_members': return r.role !== 'owner' && (r.user_id === uid || this.owner(r.pet_id, uid));
       case 'pet_invites': return r.created_by === uid;
+      case 'practice_favorites': case 'practice_invite_requests': return r.user_id === uid;
       default: return false;
     }
   }
@@ -128,7 +142,8 @@ export class FakeSupabase {
       case 'vaccinations': return r.owner_id === uid && r.source === 'owner' && this.editor(r.pet_id, uid);
       case 'pet_documents': case 'appointments': case 'reminders': case 'pet_insurances': case 'insurance_claims': case 'sitter_access': return r.owner_id === uid && this.editor(r.pet_id, uid);
       case 'routine_done': return r.owner_id === uid && this.editor(this.itemPet(r.routine_item_id), uid);
-      default: return false; // profiles, pet_members, pet_invites, pet_invite_pets: nur über Trigger/RPC
+      case 'practice_favorites': case 'practice_invite_requests': return r.user_id === uid && this.db.practices!.some((x) => x.id === r.practice_id);
+      default: return false; // profiles, pet_members, pet_invites, pet_invite_pets, practices: nur über Trigger/RPC/Import
     }
   }
 
@@ -236,6 +251,28 @@ export class FakeSupabase {
   }
   private rpc(fn: string, a: Row, uid: string): unknown {
     const fail = (m: string, status = 400, code = 'P0001') => { throw new HttpError(status, code, m); };
+    if (fn === 'geocode_place') {
+      const q = String(a.p_q ?? '').trim();
+      if (!q) return [];
+      const hits = this.db.postal_codes!.filter((pc) => (/^\d{5}$/.test(q) && pc.postcode === q) || (!/^\d+$/.test(q) && String(pc.place ?? '').toLowerCase().startsWith(q.toLowerCase())));
+      return hits.sort((x, y) => Number(String(y.place).toLowerCase() === q.toLowerCase()) - Number(String(x.place).toLowerCase() === q.toLowerCase()) || String(x.place).localeCompare(String(y.place)) || String(x.postcode).localeCompare(String(y.postcode))).slice(0, 10);
+    }
+    if (fn === 'search_practices') {
+      const la = Number(a.p_lat), lo = Number(a.p_lon), r = Math.max(1, Math.min(Number(a.p_radius_km ?? 10), 100));
+      const sp = (a.p_species as string | null) ?? null; const sv = (a.p_services ?? []) as string[]; const ti = (a.p_titles ?? []) as string[];
+      const q = String(a.p_q ?? '').trim().toLowerCase();
+      const km = (lat1: number, lon1: number, lat2: number, lon2: number) => { const rad = (d: number) => (d * Math.PI) / 180; const h = Math.sin(rad(lat2 - lat1) / 2) ** 2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(rad(lon2 - lon1) / 2) ** 2; return 6371 * 2 * Math.asin(Math.sqrt(h)); };
+      return this.db.practices!.filter((x) => x.active && (!q || String(x.name).toLowerCase().includes(q)))
+        .map((x) => ({ x, d: km(la, lo, Number(x.lat), Number(x.lon)), pp: this.db.practice_profiles!.find((y) => y.practice_id === x.id) }))
+        .filter((e) => e.d <= r).sort((m, n) => m.d - n.d).slice(0, Math.max(1, Math.min(Number(a.p_limit ?? 100), 300)))
+        .map(({ x, d, pp }) => {
+          const psp = (pp?.species ?? []) as string[]; const psv = (pp?.services ?? []) as string[]; const pti = (pp?.titles ?? []) as string[];
+          return { id: x.id, name: x.name, street: x.street, housenumber: x.housenumber, postcode: x.postcode, city: x.city, lat: x.lat, lon: x.lon, distance_km: Math.round(d * 10) / 10,
+            phone: x.phone, website: x.website, opening_hours: x.opening_hours, registered: x.registered, has_profile: !!pp, species: psp, services: psv, titles: pti, focus: (pp?.focus ?? []) as string[], titles_verified: !!pp?.titles_verified,
+            matches: !!pp && (!sp || psp.includes(sp)) && sv.every((k) => psv.includes(k)) && ti.every((k) => pti.includes(k)),
+            is_favorite: this.db.practice_favorites!.some((f) => f.practice_id === x.id && f.user_id === uid) };
+        });
+    }
     if (fn === 'complete_reminder') {
       const doneOn = String(a.p_done_on ?? this.today);
       const plus = (iso: string, n: number) => { const [y, m, d] = iso.split('-').map(Number) as [number, number, number]; return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };
@@ -485,7 +522,8 @@ export class FakeSupabase {
   private withDefaults(table: string, input: Row, uid: string): Row {
     const now = new Date().toISOString();
     const base: Row = { id: randomUUID(), created_at: now };
-    if (!['profiles', 'pet_members', 'pet_invite_pets'].includes(table)) base.owner_id = uid;
+    if (!['profiles', 'pet_members', 'pet_invite_pets', 'practice_favorites', 'practice_invite_requests'].includes(table)) base.owner_id = uid;
+    if (table === 'practice_favorites' || table === 'practice_invite_requests') base.user_id = uid;
     if (table === 'pets') Object.assign(base, { deceased: false, updated_at: now, species_other: null, breed: null, sex: null, birth_date: null, chip_no: null, cat_outdoor: null, stable: null, allergies: null, medications: null, emergency_contact: null, photo_path: null, vet_name: null, vet_phone: null, owner_phone: null });
     if (table === 'pet_insurances') Object.assign(base, { holder_name: null, deductible: null, reimbursement_pct: null, submission: null, note: null });
     if (table === 'insurance_claims') Object.assign(base, { claim_date: this.today, status: 'open', reimbursed_amount: null, document_id: null, note: null });
@@ -582,6 +620,7 @@ export class FakeSupabase {
       if (r.repeat_days != null && !(Number.isInteger(r.repeat_days) && Number(r.repeat_days) >= 1 && Number(r.repeat_days) <= 3650)) return 'reminders_repeat_days_check';
       if (r.note != null && String(r.note).length > 1000) return 'reminders_note_check';
     }
+    if ((table === 'practice_favorites' || table === 'practice_invite_requests') && this.db[table]!.some((x) => x !== self && x.user_id === r.user_id && x.practice_id === r.practice_id)) return 'dup';
     if (table === 'routine_done' && this.db.routine_done!.some((x) => x.routine_item_id === r.routine_item_id && x.done_on === r.done_on)) return 'dup';
     return null;
   }

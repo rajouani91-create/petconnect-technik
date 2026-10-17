@@ -210,7 +210,8 @@ test.describe('Gemeinsamer Alltag und Rechte', () => {
     await expect(check).toHaveAttribute('aria-disabled', 'true');
     await check.click({ force: true });
     expect(fake.db.routine_done).toHaveLength(0);
-    await nav(o, 'Alltag').click();
+    await o.getByRole('navigation', { name: 'Hauptnavigation' }).getByRole('link', { name: 'Mehr' }).click();
+    await o.locator('#main').getByRole('link', { name: 'Alltag', exact: true }).click(); // seit Auftrag 08 unter „Mehr“
     await expect(o.locator('.routine-row')).toHaveCount(4);
     await expect(o.getByRole('switch')).toHaveCount(0);
     await expect(o.getByRole('button', { name: 'Eintrag hinzufügen' })).toHaveCount(0);

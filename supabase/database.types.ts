@@ -368,6 +368,156 @@ export type Database = {
         }
         Relationships: []
       }
+      postal_codes: {
+        Row: {
+          lat: number
+          lon: number
+          place: string | null
+          postcode: string
+        }
+        Insert: {
+          lat: number
+          lon: number
+          place?: string | null
+          postcode: string
+        }
+        Update: {
+          [_ in never]?: never
+        }
+        Relationships: [
+        ]
+      }
+      practice_favorites: {
+        Row: {
+          created_at: string
+          practice_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          practice_id: string
+          user_id?: string
+        }
+        Update: {
+          [_ in never]?: never
+        }
+        Relationships: [
+          {
+            foreignKeyName: "practice_favorites_practice_id_fkey"
+            columns: ["practice_id"]
+            isOneToOne: false
+            referencedRelation: "practices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      practice_invite_requests: {
+        Row: {
+          created_at: string
+          practice_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          practice_id: string
+          user_id?: string
+        }
+        Update: {
+          [_ in never]?: never
+        }
+        Relationships: [
+          {
+            foreignKeyName: "practice_invite_requests_practice_id_fkey"
+            columns: ["practice_id"]
+            isOneToOne: false
+            referencedRelation: "practices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      practice_profiles: {
+        Row: {
+          focus: string[]
+          practice_id: string
+          services: string[]
+          species: string[]
+          titles: string[]
+          titles_verified: boolean
+          updated_at: string
+        }
+        Insert: {
+          focus?: string[]
+          practice_id: string
+          services?: string[]
+          species?: string[]
+          titles?: string[]
+          titles_verified?: boolean
+          updated_at?: string
+        }
+        Update: {
+          [_ in never]?: never
+        }
+        Relationships: [
+          {
+            foreignKeyName: "practice_profiles_practice_id_fkey"
+            columns: ["practice_id"]
+            isOneToOne: false
+            referencedRelation: "practices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      practices: {
+        Row: {
+          active: boolean
+          city: string | null
+          created_at: string
+          email: string | null
+          housenumber: string | null
+          id: string
+          last_seen_at: string
+          lat: number
+          lon: number
+          name: string
+          opening_hours: string | null
+          osm_id: number | null
+          osm_type: string | null
+          phone: string | null
+          postcode: string | null
+          registered: boolean
+          source: string
+          street: string | null
+          updated_at: string
+          website: string | null
+        }
+        Insert: {
+          active?: boolean
+          city?: string | null
+          created_at?: string
+          email?: string | null
+          housenumber?: string | null
+          id?: string
+          last_seen_at?: string
+          lat: number
+          lon: number
+          name: string
+          opening_hours?: string | null
+          osm_id?: number | null
+          osm_type?: string | null
+          phone?: string | null
+          postcode?: string | null
+          registered?: boolean
+          source?: string
+          street?: string | null
+          updated_at?: string
+          website?: string | null
+        }
+        Update: {
+          [_ in never]?: never
+        }
+        Relationships: [
+        ]
+      }
       profiles: {
         Row: {
           created_at: string
@@ -662,7 +812,51 @@ export type Database = {
           token: string
         }[]
       }
+      geocode_place: {
+        Args: { p_q: string }
+        Returns: {
+          lat: number
+          lon: number
+          place: string | null
+          postcode: string
+        }[]
+      }
       invite_preview: { Args: { p_token: string }; Returns: Json }
+      search_practices: {
+        Args: {
+          p_lat: number
+          p_limit?: number
+          p_lon: number
+          p_q?: string | null
+          p_radius_km?: number
+          p_services?: string[]
+          p_species?: string | null
+          p_titles?: string[]
+        }
+        Returns: {
+          city: string | null
+          distance_km: number
+          focus: string[]
+          has_profile: boolean
+          housenumber: string | null
+          id: string
+          is_favorite: boolean
+          lat: number
+          lon: number
+          matches: boolean
+          name: string
+          opening_hours: string | null
+          phone: string | null
+          postcode: string | null
+          registered: boolean
+          services: string[]
+          species: string[]
+          street: string | null
+          titles: string[]
+          titles_verified: boolean
+          website: string | null
+        }[]
+      }
       sitter_view: { Args: { p_token: string }; Returns: Json }
     }
     Enums: {

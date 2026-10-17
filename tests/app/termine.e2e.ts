@@ -200,7 +200,8 @@ test.describe('Erinnerungen', () => {
     fake.db.vaccinations!.push({ id: randomUUID(), pet_id: luna.id, owner_id: ahmed.id, name: 'Tollwut', given_on: '2025-11-01', valid_until: '2026-11-01', source: 'owner', created_at: NOW.toISOString() });
     fake.db.vaccinations!.push({ id: randomUUID(), pet_id: luna.id, owner_id: ahmed.id, name: 'Staupe', given_on: '2026-01-01', valid_until: '2029-01-01', source: 'owner', created_at: NOW.toISOString() });
     const p = await openAs(browser, fake, 'ahmed@test.invalid', '/');
-    await nav(p, 'Erinnerungen').click();
+    await p.getByRole('navigation', { name: 'Hauptnavigation' }).getByRole('link', { name: 'Mehr' }).click();
+    await p.locator('#main').getByRole('link', { name: 'Erinnerungen', exact: true }).click(); // seit Auftrag 08 unter „Mehr“
     const over = section(p, /^Überfällig/);
     await expect(over.locator('.record-row')).toHaveCount(2);
     await expect(over.locator('.record-row').nth(0)).toContainText('Wurmkur');
@@ -332,7 +333,8 @@ test.describe('Filter, Übersicht, Rechte', () => {
     await filter.selectOption({ label: 'Mio' });
     await expect(main(p)).not.toContainText('Termin Luna');
     await expect(main(p)).toContainText('Termin Mio');
-    await nav(p, 'Erinnerungen').click();
+    await p.getByRole('navigation', { name: 'Hauptnavigation' }).getByRole('link', { name: 'Mehr' }).click();
+    await p.locator('#main').getByRole('link', { name: 'Erinnerungen', exact: true }).click(); // seit Auftrag 08 unter „Mehr“
     // erst wenn die neue Seite da ist (sonst trifft die Auswahl noch den Filter der Termin-Seite)
     await expect(p.getByRole('heading', { name: 'Erinnerungen', level: 1 })).toBeVisible();
     await expect(main(p)).toContainText('Erinnerung Mio');
@@ -381,7 +383,8 @@ test.describe('Filter, Übersicht, Rechte', () => {
     await expect.poll(() => fake.db.appointments!.filter((a) => a.owner_id === kyra.id).length).toBe(1);
     await k.getByRole('button', { name: 'Kontrolle als erledigt markieren' }).click();
     await expect.poll(() => fake.db.appointments!.find((a) => a.title === 'Kontrolle')!.status).toBe('done');
-    await nav(k, 'Erinnerungen').click();
+    await k.getByRole('navigation', { name: 'Hauptnavigation' }).getByRole('link', { name: 'Mehr' }).click();
+    await k.locator('#main').getByRole('link', { name: 'Erinnerungen', exact: true }).click(); // seit Auftrag 08 unter „Mehr“
     await k.getByRole('button', { name: 'Wurmkur für Luna als erledigt markieren' }).click();
     await expect.poll(() => fake.db.reminders![0]!.due_on).toBe('2027-01-14');
 
@@ -392,7 +395,8 @@ test.describe('Filter, Übersicht, Rechte', () => {
     await expect(main(o).getByRole('button', { name: /ändern|löschen|erledigt|absagen/ })).toHaveCount(0);
     const [dl] = await Promise.all([o.waitForEvent('download'), o.getByRole('button', { name: 'Training in meinen Kalender eintragen' }).click()]);
     expect(dl.suggestedFilename()).toMatch(/\.ics$/);
-    await nav(o, 'Erinnerungen').click();
+    await o.getByRole('navigation', { name: 'Hauptnavigation' }).getByRole('link', { name: 'Mehr' }).click();
+    await o.locator('#main').getByRole('link', { name: 'Erinnerungen', exact: true }).click(); // seit Auftrag 08 unter „Mehr“
     await expect(main(o)).toContainText('Sie können die Erinnerungen ansehen, aber nicht ändern.');
     await expect(main(o)).toContainText('Wurmkur');
     await expect(o.getByRole('button', { name: 'Erinnerung anlegen' })).toHaveCount(0);
@@ -468,12 +472,12 @@ test.describe('Tastatur und Darstellung', () => {
     await expect(status(p, 'Erledigt. Nächste Erinnerung am 13.01.2027.')).toHaveCount(1);
   });
 
-  test('320 px: Termine, Erinnerungen und Übersicht ohne seitliches Scrollen; Navigation mit 6 Punkten', async ({ browser }) => {
+  test('320 px: Termine, Erinnerungen und Übersicht ohne seitliches Scrollen; Navigation mit 5 Punkten (Rest unter „Mehr“)', async ({ browser }) => {
     const { fake, ahmed, luna } = setup();
     seedAppt(fake, luna, ahmed, 'Kontrolle mit einem ziemlich langen Titel für den Termin', '2026-10-20T08:00:00.000Z', { location: 'Tierklinik am anderen Ende der Stadt, Haupteingang Süd', note: 'Lange Notiz '.repeat(20) });
     seedRem(fake, luna, ahmed, 'Floh- und Zeckenschutz monatlich auftragen nicht vergessen', '2026-10-14', 30, { kind: 'flea_tick' });
     const p = await openAs(browser, fake, 'ahmed@test.invalid', '/', 320);
-    await expect(p.getByRole('navigation', { name: 'Hauptnavigation' }).getByRole('link')).toHaveText(['Heute', 'Termine', 'Tier', 'Erinnerungen', 'Alltag', 'Mehr']);
+    await expect(p.getByRole('navigation', { name: 'Hauptnavigation' }).getByRole('link')).toHaveText(['Heute', 'Termine', 'Tier', 'Praxen', 'Mehr']);
     for (const url of ['/', '/termine', '/erinnerungen']) {
       await p.goto(url); await p.waitForLoadState('networkidle');
       expect(await p.evaluate(() => document.documentElement.scrollWidth), url).toBeLessThanOrEqual(320);
