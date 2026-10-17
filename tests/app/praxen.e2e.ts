@@ -11,7 +11,7 @@ const C = { lat: 49.99, lon: 8.41 };
 const errors = new Map<Page, string[]>();
 test.setTimeout(60_000);
 
-async function openAs(browser: Browser, fake: FakeSupabase, email: string, url: string, opts: { width?: number; ctx?: BrowserContextOptions } = {}): Promise<Page> {
+async function openAs(browser: Browser, fake: FakeSupabase, email: string, url: string, opts: { width?: number; ctx?: BrowserContextOptions; now?: Date } = {}): Promise<Page> {
   const ctx = await browser.newContext({ locale: 'de-DE', timezoneId: 'Europe/Berlin', viewport: { width: opts.width ?? 412, height: 915 }, isMobile: true, hasTouch: true, ...opts.ctx });
   await fake.installContext(ctx);
   const page = await ctx.newPage();
@@ -19,7 +19,7 @@ async function openAs(browser: Browser, fake: FakeSupabase, email: string, url: 
   errors.set(page, list);
   page.on('console', (m) => { if (m.type() === 'error') list.push(m.text()); });
   page.on('pageerror', (e) => list.push(String(e)));
-  await page.clock.setFixedTime(NOW);
+  await page.clock.setFixedTime(opts.now ?? NOW);
   await page.goto('/login');
   await page.getByLabel('E-Mail').fill(email);
   await page.getByLabel('Passwort').fill(PW);
@@ -31,7 +31,8 @@ async function openAs(browser: Browser, fake: FakeSupabase, email: string, url: 
   return page;
 }
 
-function setup() {
+/** `extra`: zusätzliche Praxen für Auftrag 08b (Namenssuche, Radius-Vorschlag, Namens-Hinweis) */
+function setup(extra = false) {
   const fake = new FakeSupabase();
   const ahmed = fake.seedUser('ahmed@test.invalid', PW, 'Ahmed');
   const oma = fake.seedUser('oma@test.invalid', PW, 'Oma Erika');
@@ -51,6 +52,12 @@ function setup() {
   const noProfile = fake.seedPractice({ name: 'Tierarzt ohne Profil', postcode: '65428', city: 'Rüsselsheim', lat: C.lat + 0.027, lon: C.lon, phone: '06142 555666', opening_hours: null });
   const far = fake.seedPractice({ name: 'Tierklinik Weit', postcode: '55116', city: 'Mainz', lat: C.lat + 0.18, lon: C.lon, phone: '06131 777' });
   fake.seedPractice({ name: 'Geschlossene Praxis', lat: C.lat + 0.005, lon: C.lon, active: false });
+  if (extra) {
+    fake.seedPractice({ name: 'Tierarztpraxis Dr. Müller', postcode: '65428', city: 'Rüsselsheim', lat: C.lat - 0.027, lon: C.lon, phone: '06142 888', opening_hours: 'Mo-Fr 08:00-12:00 open "nur Notfälle"' });
+    fake.seedPractice({ name: 'Exotenpraxis Bauschheim', postcode: '65428', city: 'Rüsselsheim', lat: C.lat - 0.036, lon: C.lon, phone: '06142 999' });
+    fake.seedPractice({ name: 'Vogelpraxis Süd', lat: C.lat - 0.18, lon: C.lon, phone: '06151 1' }, { species: ['bird'], titles: ['birds'], titles_verified: true });
+    fake.seedPractice({ name: 'Pferdeklinik Taunus', lat: C.lat + 0.27, lon: C.lon, phone: '06192 1' }, { species: ['horse'], services: ['equine_mobile'] });
+  }
   return { fake, ahmed, oma, luna, reptile, small, noProfile, far };
 }
 
@@ -64,8 +71,13 @@ const opts = (p: Page) => p.getByRole('listbox', { name: 'Vorschläge' }).getByR
 async function searchPlz(p: Page, q = '65428') {
   const box = p.getByRole('combobox', { name: 'Ort oder PLZ' });
   await box.fill(q);
-  await expect(opts(p).first()).toBeVisible();
-  await opts(p).first().click();
+  if (/^\d{5}$/.test(q)) {
+    // seit 08b: genau 5 Ziffern mit genau einem Treffer werden automatisch übernommen
+    await expect(box).toHaveValue(new RegExp(`^${q} `));
+  } else {
+    await expect(opts(p).first()).toBeVisible();
+    await opts(p).first().click();
+  }
   await expect(counter(p)).not.toBeEmpty();
 }
 
@@ -92,15 +104,16 @@ test.describe('Suche', () => {
     await expect(counter(p)).toHaveText('3 Praxen passen · 65428 Rüsselsheim');
     await expect(counter(p)).toBeFocused();
     await expect(p).toHaveURL(/\/praxen\?plz=65428$/);
-    await expect(cards(p).locator('h3')).toHaveText(['Kleintierpraxis Süd', 'Reptilienpraxis am Main', 'Tierarzt ohne Profil']);
-    await expect(cards(p).nth(0)).toContainText('1,0 km');
+    // „Empfohlen (Entfernung)“: bei PetConnect zuerst (seit 08b), dann Entfernung
+    await expect(cards(p).locator('h3')).toHaveText(['Reptilienpraxis am Main', 'Kleintierpraxis Süd', 'Tierarzt ohne Profil']);
+    await expect(cards(p).filter({ hasText: 'Kleintierpraxis Süd' })).toContainText('1,0 km');
     await expect(main(p)).not.toContainText('Geschlossene Praxis');
     await expect(main(p)).not.toContainText('Tierklinik Weit');
     // Karte einer Praxis mit Profil
     const r = cards(p).filter({ hasText: 'Reptilienpraxis am Main' });
     await expect(r).toContainText('Mainstraße 5, 65428 Rüsselsheim');
     await expect(r).toContainText('bei PetConnect');
-    await expect(r).toContainText('jetzt geöffnet');
+    await expect(r).toContainText('Jetzt geöffnet – bis 18:00');
     await expect(r).toContainText('heute 08:00–18:00');
     await expect(r).toContainText('Behandelt: Reptil, Hund');
     await expect(r).toContainText('Angebot: Überwinterung (Winterstarre-Betreuung), Operationen');
@@ -180,6 +193,8 @@ test.describe('Suche', () => {
     const p = await openAs(browser, fake, 'ahmed@test.invalid', '/praxen?plz=65428&t=birds');
     await expect(counter(p)).toHaveText('Keine Praxis passt · 65428 Rüsselsheim');
     await expect(main(p)).toContainText('Keine Praxis bei PetConnect passt zu Ihrer Auswahl. Nehmen Sie einen Filter heraus oder fragen Sie bei einer Praxis ohne Angaben nach.');
+    // Praxen mit Angaben gibt es, aber auch in größerem Umkreis passt keine → kein Radius-Knopf (08b)
+    await expect(main(p).getByRole('button', { name: /Suchradius/ })).toHaveCount(0);
     await main(p).getByRole('button', { name: 'Filter zurücksetzen' }).last().click();
     await expect(counter(p)).toHaveText('3 Praxen passen · 65428 Rüsselsheim');
     await expect(p).toHaveURL(/\/praxen\?plz=65428$/);
@@ -207,7 +222,7 @@ test.describe('Suche', () => {
     const { fake } = setup();
     const p = await openAs(browser, fake, 'ahmed@test.invalid', '/praxen?plz=65428');
     await expect(counter(p)).toContainText('3 Praxen passen');
-    await expect(cards(p).filter({ hasText: 'Kleintierpraxis Süd' })).toContainText('jetzt geschlossen');
+    await expect(cards(p).filter({ hasText: 'Kleintierpraxis Süd' })).toContainText('Geschlossen – öffnet heute um 14:00');
     await expect(cards(p).filter({ hasText: 'Kleintierpraxis Süd' })).toContainText('heute 14:00–18:00');
     await main(p).getByRole('switch', { name: 'Jetzt geöffnet' }).click();
     await expect(p).toHaveURL(/offen=1/);
@@ -368,5 +383,124 @@ test.describe('Tastatur und Darstellung', () => {
     await searchPlz(p).catch(() => undefined);
     await expect(main(p).getByRole('alert')).toHaveText('Die Suche ist gerade nicht erreichbar. Bitte versuchen Sie es gleich noch einmal.');
     errors.get(p)!.length = 0; // erwarteter Fehler in der Konsole
+  });
+});
+
+test.describe('Verbesserungen (08b)', () => {
+  test('Namenssuche fehlertolerant: „Mueller“, „muller“, „Tierarztpraxis Dr. Müller“, „Pferdklinik“; Text nur getrimmt', async ({ browser }) => {
+    const { fake } = setup(true);
+    for (const q of ['Mueller', 'muller', 'Tierarztpraxis Dr. Müller']) {
+      const p = await openAs(browser, fake, 'ahmed@test.invalid', `/praxen?plz=65428&q=${encodeURIComponent(q)}`);
+      await expect(counter(p), q).toHaveText('1 Praxis passt · 65428 Rüsselsheim');
+      await expect(cards(p).locator('h3'), q).toHaveText(['Tierarztpraxis Dr. Müller']);
+      await p.context().close();
+    }
+    const p = await openAs(browser, fake, 'ahmed@test.invalid', '/praxen?plz=65428&r=50');
+    await expect(counter(p)).toContainText('Praxen passen');
+    await main(p).getByLabel('Praxisname (optional)').fill('  Pferdklinik ');
+    await expect(counter(p)).toHaveText('1 Praxis passt · 65428 Rüsselsheim');
+    await expect(cards(p).locator('h3')).toHaveText(['Pferdeklinik Taunus']);
+    const call = [...fake.calls].reverse().find((c) => c.path === '/rest/v1/rpc/search_practices')!;
+    expect((call.body as { p_q: string }).p_q).toBe('Pferdklinik'); // nicht umgewandelt, nur getrimmt
+    await expect(p).toHaveURL(/q=Pferdklinik/);
+  });
+
+  test('Ort tolerant („Ruesselsheim“, „Rüselsheim“), Treffer fett; 5-stellige PLZ automatisch übernommen und angesagt', async ({ browser }) => {
+    const { fake } = setup();
+    const p = await openAs(browser, fake, 'ahmed@test.invalid', '/praxen');
+    const box = p.getByRole('combobox', { name: 'Ort oder PLZ' });
+    for (const q of ['Ruesselsheim', 'Rüselsheim']) {
+      await box.fill(q);
+      await expect(opts(p), q).toHaveText(['65428 Rüsselsheim']);
+    }
+    await box.fill('Rüss');
+    await expect(opts(p).first().locator('mark')).toHaveText('Rüss');
+    // ein Zeichen: keine Abfrage
+    const before = fake.calls.filter((c) => c.path === '/rest/v1/rpc/geocode_place').length;
+    await box.fill('R');
+    await p.waitForTimeout(500);
+    expect(fake.calls.filter((c) => c.path === '/rest/v1/rpc/geocode_place').length).toBe(before);
+    await expect(box).toHaveAttribute('aria-expanded', 'false');
+    // kein Treffer
+    await box.fill('Xyzabc');
+    await expect(main(p)).toContainText('Ort nicht gefunden – bitte PLZ oder anderen Ortsnamen versuchen.');
+    // PLZ: automatisch, Fokus bleibt im Feld
+    await box.fill('65428');
+    await expect(box).toHaveValue('65428 Rüsselsheim');
+    await expect(status(p, 'Rüsselsheim, 65428 ausgewählt')).toHaveCount(1);
+    await expect(counter(p)).toHaveText('3 Praxen passen · 65428 Rüsselsheim');
+    await expect(box).toBeFocused();
+    await expect(p).toHaveURL(/plz=65428/);
+  });
+
+  test('Radius-Knopf nur bei echten Treffern im größeren Umkreis; Klick erweitert Radius und URL', async ({ browser }) => {
+    const { fake } = setup(true);
+    const p = await openAs(browser, fake, 'ahmed@test.invalid', '/praxen?plz=65428&t=birds');
+    await expect(counter(p)).toHaveText('Keine Praxis passt · 65428 Rüsselsheim');
+    const more = main(p).getByRole('button', { name: 'Suchradius auf 25 km erweitern' });
+    await expect(more).toBeVisible();
+    await expect(main(p)).toContainText('1 passende Praxis im Umkreis von 25 km');
+    expect(fake.calls.some((c) => c.path === '/rest/v1/rpc/count_practices_by_radius')).toBe(true);
+    await more.click();
+    await expect(p).toHaveURL(/plz=65428&r=25&t=birds/);
+    await expect(counter(p)).toHaveText('1 Praxis passt · 65428 Rüsselsheim');
+    await expect(counter(p)).toBeFocused();
+    await expect(main(p).locator('.practice-list').first().locator('h3')).toHaveText(['Vogelpraxis Süd']);
+    await expect(main(p).getByRole('button', { name: /Suchradius/ })).toHaveCount(0);
+  });
+
+  test('Ohne jedes Praxisprofil: Hinweis statt Radius-Knopf; bis 50 km nichts: Link zu OpenStreetMap', async ({ browser }) => {
+    const fake = new FakeSupabase();
+    fake.seedPet(fake.seedUser('ahmed@test.invalid', PW, 'Ahmed'), { name: 'Luna', species: 'dog' });
+    fake.seedPostcode('65428', 'Rüsselsheim', C.lat, C.lon);
+    fake.seedPostcode('10115', 'Berlin', 52.53, 13.38);
+    fake.seedPractice({ name: 'Tierarzt Nord', lat: C.lat + 0.009, lon: C.lon });
+    fake.seedPractice({ name: 'Tierarzt Fern', lat: C.lat + 0.27, lon: C.lon });
+    const p = await openAs(browser, fake, 'ahmed@test.invalid', '/praxen?plz=65428&tier=reptile');
+    await expect(counter(p)).toHaveText('Keine Praxis passt · 65428 Rüsselsheim');
+    await expect(main(p)).toContainText('Noch keine Praxis in Ihrer Nähe hat Angaben zu Leistungen gemacht. Diese Praxen könnten passen – bitte anrufen und nachfragen.');
+    await expect(main(p).getByRole('button', { name: /Suchradius/ })).toHaveCount(0);
+    const unknown = main(p).locator('div.stack').filter({ has: p.getByRole('heading', { name: 'Noch nicht bei PetConnect – Angebot unbekannt, bitte anrufen' }) });
+    await expect(unknown.locator('.practice-card h3')).toHaveText(['Tierarzt Nord']);
+
+    await p.goto('/praxen?plz=10115'); await p.waitForLoadState('networkidle');
+    await expect(main(p)).toContainText('Im Umkreis von 50 km haben wir keine Praxis gefunden.');
+    await expect(main(p).getByRole('link', { name: 'Praxis bei OpenStreetMap eintragen' })).toHaveAttribute('href', 'https://www.openstreetmap.org/note/new#map=18/52.53/13.38');
+    await expect(main(p).getByRole('button', { name: /Suchradius/ })).toHaveCount(0);
+  });
+
+  test('Öffnungsstatus mit Uhr: geöffnet bis, schließt bald, geschlossen/öffnet, unbekannt, Kommentar', async ({ browser }) => {
+    const { fake } = setup(true);
+    const card = (p: Page, name: string) => cards(p).filter({ hasText: name });
+    const p = await openAs(browser, fake, 'ahmed@test.invalid', '/praxen?plz=65428'); // Freitag 10:00
+    await expect(card(p, 'Reptilienpraxis am Main').locator('.pill.oh-open')).toHaveText('Jetzt geöffnet – bis 18:00');
+    await expect(card(p, 'Kleintierpraxis Süd').locator('.pill.oh-closed')).toHaveText('Geschlossen – öffnet heute um 14:00');
+    await expect(card(p, 'Tierarzt ohne Profil').locator('.pill.oh-unknown')).toHaveText('Öffnungszeiten unbekannt');
+    await expect(card(p, 'Tierarztpraxis Dr. Müller')).toContainText('Hinweis: nur Notfälle');
+
+    await p.clock.setFixedTime(new Date('2026-10-16T17:30:00+02:00'));
+    await p.reload(); await p.waitForLoadState('networkidle');
+    await expect(card(p, 'Reptilienpraxis am Main').locator('.pill.oh-closing')).toHaveText('Schließt bald – um 18:00');
+    await main(p).getByRole('switch', { name: 'Jetzt geöffnet' }).click();
+    await expect(main(p).locator('.practice-list').first()).toContainText('Kleintierpraxis Süd'); // schließt bald = geöffnet
+    await main(p).getByRole('switch', { name: 'Jetzt geöffnet' }).click();
+
+    await p.clock.setFixedTime(new Date('2026-10-16T19:00:00+02:00'));
+    await p.reload(); await p.waitForLoadState('networkidle');
+    await expect(card(p, 'Reptilienpraxis am Main').locator('.pill.oh-closed')).toHaveText('Geschlossen – öffnet Montag um 08:00');
+  });
+
+  test('„Exotenpraxis“ bei Tierart Reptil: nur Hinweis im Abschnitt „Angebot unbekannt“, kein Treffer', async ({ browser }) => {
+    const { fake } = setup(true);
+    const p = await openAs(browser, fake, 'ahmed@test.invalid', '/praxen?plz=65428&tier=reptile');
+    await expect(counter(p)).toHaveText('1 Praxis passt · 65428 Rüsselsheim');
+    await expect(main(p).locator('.practice-list').first().locator('h3')).toHaveText(['Reptilienpraxis am Main']);
+    const unknown = main(p).locator('div.stack').filter({ has: p.getByRole('heading', { name: 'Noch nicht bei PetConnect – Angebot unbekannt, bitte anrufen' }) });
+    // weiter oben trotz größerer Entfernung, mit Hinweis
+    await expect(unknown.locator('.practice-card h3')).toHaveText(['Exotenpraxis Bauschheim', 'Tierarzt ohne Profil', 'Tierarztpraxis Dr. Müller']);
+    const exo = unknown.locator('.practice-card').filter({ hasText: 'Exotenpraxis Bauschheim' });
+    await expect(exo).toContainText('Name deutet auf Reptil hin – bitte anrufen und nachfragen');
+    await expect(exo).toContainText('noch nicht bei PetConnect');
+    await expect(unknown.locator('.practice-card').filter({ hasText: 'Tierarzt ohne Profil' })).not.toContainText('Name deutet');
   });
 });

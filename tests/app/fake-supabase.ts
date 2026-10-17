@@ -12,6 +12,7 @@
  *    und RPC sitter_view, die auch ohne Anmeldung (anon) aufrufbar ist
  *  - Praxissuche: practices (nur aktive lesbar), practice_profiles, postal_codes, eigene Favoriten und Einladungswünsche,
  *    RPC geocode_place und search_practices (Haversine, Umkreis max. 100 km, matches nur mit Profil)
+ *    seit 08b fehlertolerant wie in der Datenbank (normText/normQuery, Trigramm-Ähnlichkeit) und count_practices_by_radius
  *  - Unique-Regeln, Löschen mit Kaskade, Uhrzeiten als "HH:MM:SS"
  */
 import type { BrowserContext, Page, Route } from '@playwright/test';
@@ -24,6 +25,43 @@ interface User { id: string; email: string; password: string; confirmed: boolean
 
 /** 1×1-PNG, damit Fotos im Browser „laden“ */
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+
+// ---------- Praxissuche: Text vereinheitlichen wie Migration 20261017120000 (einfache Form) ----------
+
+/** wie private.norm_text: klein, ohne Akzente, ae/oe/ue/ß → a/o/u/s, ss → s, nur Buchstaben/Ziffern/Leerzeichen */
+export function normText(t: unknown): string {
+  const u = String(t ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ß/g, 'ss'); // ≈ unaccent
+  return u.replace(/ae/g, 'a').replace(/oe/g, 'o').replace(/ue/g, 'u').replace(/ss/g, 's').replace(/[^a-z0-9 ]+/g, ' ').trim();
+}
+/** wie private.norm_query: Füllwörter entfernen */
+export function normQuery(t: unknown): string {
+  return (' ' + normText(t) + ' ').replace(/( (dr|med|vet|prof|praxis|tierarztpraxis|tierarzt|tierarztin|tierarzte|tierarztliche|tierarztlicher|und|fur|am|im|der|die|das|gmbh|mvz) )+/g, ' ').trim();
+}
+/** Trigramme wie pg_trgm (je Wort mit zwei Leerzeichen davor, einem danach) */
+function trigrams(t: string): Set<string> {
+  const out = new Set<string>();
+  for (const w of t.split(/[^a-z0-9]+/).filter(Boolean)) {
+    const padded = `  ${w} `;
+    for (let i = 0; i + 3 <= padded.length; i++) out.add(padded.slice(i, i + 3));
+  }
+  return out;
+}
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 && b.size === 0) return 0;
+  let common = 0;
+  for (const x of a) if (b.has(x)) common++;
+  return common / (a.size + b.size - common);
+}
+/** wie similarity() */
+export const similarity = (a: string, b: string) => jaccard(trigrams(a), trigrams(b));
+/** Näherung für word_similarity(): beste Ähnlichkeit mit einer zusammenhängenden Wortfolge des Textes */
+export function wordSimilarity(q: string, t: string): number {
+  const words = t.split(/[^a-z0-9]+/).filter(Boolean);
+  const tq = trigrams(q);
+  let best = 0;
+  for (let i = 0; i < words.length; i++) for (let j = i + 1; j <= words.length; j++) best = Math.max(best, jaccard(tq, trigrams(words.slice(i, j).join(' '))));
+  return best;
+}
 
 class HttpError extends Error { constructor(public status: number, public code: string, msg: string) { super(msg); } }
 
@@ -62,6 +100,23 @@ export class FakeSupabase {
     return row;
   }
   seedPostcode(postcode: string, place: string, lat: number, lon: number) { this.db.postal_codes!.push({ postcode, place, lat, lon }); }
+  /** search_practices (auch für count_practices_by_radius) */
+  private searchPractices(a: Row, uid: string | null) {
+    const la = Number(a.p_lat), lo = Number(a.p_lon), r = Math.max(1, Math.min(Number(a.p_radius_km ?? 10), 100));
+    const sp = (a.p_species as string | null) ?? null; const sv = (a.p_services ?? []) as string[]; const ti = (a.p_titles ?? []) as string[];
+    const q = normQuery(a.p_q);
+    const km = (lat1: number, lon1: number, lat2: number, lon2: number) => { const rad = (d: number) => (d * Math.PI) / 180; const h = Math.sin(rad(lat2 - lat1) / 2) ** 2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(rad(lon2 - lon1) / 2) ** 2; return 6371 * 2 * Math.asin(Math.sqrt(h)); };
+    return this.db.practices!.filter((x) => x.active && (!q || normText(x.name).includes(q) || (q.length >= 4 && wordSimilarity(q, normText(x.name)) >= 0.6)))
+      .map((x) => ({ x, d: km(la, lo, Number(x.lat), Number(x.lon)), pp: this.db.practice_profiles!.find((y) => y.practice_id === x.id) }))
+      .filter((e) => e.d <= r).sort((m, n) => m.d - n.d).slice(0, Math.max(1, Math.min(Number(a.p_limit ?? 100), 300)))
+      .map(({ x, d, pp }) => {
+        const psp = (pp?.species ?? []) as string[]; const psv = (pp?.services ?? []) as string[]; const pti = (pp?.titles ?? []) as string[];
+        return { id: x.id, name: x.name, street: x.street, housenumber: x.housenumber, postcode: x.postcode, city: x.city, lat: x.lat, lon: x.lon, distance_km: Math.round(d * 10) / 10,
+          phone: x.phone, website: x.website, opening_hours: x.opening_hours, registered: x.registered, has_profile: !!pp, species: psp, services: psv, titles: pti, focus: (pp?.focus ?? []) as string[], titles_verified: !!pp?.titles_verified,
+          matches: !!pp && (!sp || psp.includes(sp)) && sv.every((k) => psv.includes(k)) && ti.every((k) => pti.includes(k)),
+          is_favorite: this.db.practice_favorites!.some((f) => f.practice_id === x.id && f.user_id === uid) };
+      });
+  }
   /** Zeilen, die ein Nutzer sehen würde (ohne uid: alle) */
   rows(table: string, uid?: string) { return uid ? this.db[table]!.filter((r) => this.canSee(table, r, uid)) : this.db[table]!; }
 
@@ -252,27 +307,26 @@ export class FakeSupabase {
   private rpc(fn: string, a: Row, uid: string): unknown {
     const fail = (m: string, status = 400, code = 'P0001') => { throw new HttpError(status, code, m); };
     if (fn === 'geocode_place') {
-      const q = String(a.p_q ?? '').trim();
-      if (!q) return [];
-      const hits = this.db.postal_codes!.filter((pc) => (/^\d{5}$/.test(q) && pc.postcode === q) || (!/^\d+$/.test(q) && String(pc.place ?? '').toLowerCase().startsWith(q.toLowerCase())));
-      return hits.sort((x, y) => Number(String(y.place).toLowerCase() === q.toLowerCase()) - Number(String(x.place).toLowerCase() === q.toLowerCase()) || String(x.place).localeCompare(String(y.place)) || String(x.postcode).localeCompare(String(y.postcode))).slice(0, 10);
+      const raw = String(a.p_q ?? '').trim();
+      const q = normText(raw);
+      if (!raw) return [];
+      const np = (pc: Row) => normText(pc.place);
+      const hits = this.db.postal_codes!.filter((pc) =>
+        (/^\d{5}$/.test(raw) && pc.postcode === raw) ||
+        (/^\d{2,4}$/.test(raw) && String(pc.postcode).startsWith(raw)) ||
+        (!/^\d+$/.test(raw) && q.length >= 2 && (np(pc).startsWith(q) || np(pc).includes(' ' + q) || (q.length >= 4 && similarity(np(pc), q) >= 0.45))));
+      return hits.sort((x, y) =>
+        Number(np(y) === q) - Number(np(x) === q) || Number(np(y).startsWith(q)) - Number(np(x).startsWith(q)) ||
+        similarity(np(y), q) - similarity(np(x), q) || String(x.place).localeCompare(String(y.place)) || String(x.postcode).localeCompare(String(y.postcode))).slice(0, 10);
     }
-    if (fn === 'search_practices') {
-      const la = Number(a.p_lat), lo = Number(a.p_lon), r = Math.max(1, Math.min(Number(a.p_radius_km ?? 10), 100));
-      const sp = (a.p_species as string | null) ?? null; const sv = (a.p_services ?? []) as string[]; const ti = (a.p_titles ?? []) as string[];
-      const q = String(a.p_q ?? '').trim().toLowerCase();
-      const km = (lat1: number, lon1: number, lat2: number, lon2: number) => { const rad = (d: number) => (d * Math.PI) / 180; const h = Math.sin(rad(lat2 - lat1) / 2) ** 2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(rad(lon2 - lon1) / 2) ** 2; return 6371 * 2 * Math.asin(Math.sqrt(h)); };
-      return this.db.practices!.filter((x) => x.active && (!q || String(x.name).toLowerCase().includes(q)))
-        .map((x) => ({ x, d: km(la, lo, Number(x.lat), Number(x.lon)), pp: this.db.practice_profiles!.find((y) => y.practice_id === x.id) }))
-        .filter((e) => e.d <= r).sort((m, n) => m.d - n.d).slice(0, Math.max(1, Math.min(Number(a.p_limit ?? 100), 300)))
-        .map(({ x, d, pp }) => {
-          const psp = (pp?.species ?? []) as string[]; const psv = (pp?.services ?? []) as string[]; const pti = (pp?.titles ?? []) as string[];
-          return { id: x.id, name: x.name, street: x.street, housenumber: x.housenumber, postcode: x.postcode, city: x.city, lat: x.lat, lon: x.lon, distance_km: Math.round(d * 10) / 10,
-            phone: x.phone, website: x.website, opening_hours: x.opening_hours, registered: x.registered, has_profile: !!pp, species: psp, services: psv, titles: pti, focus: (pp?.focus ?? []) as string[], titles_verified: !!pp?.titles_verified,
-            matches: !!pp && (!sp || psp.includes(sp)) && sv.every((k) => psv.includes(k)) && ti.every((k) => pti.includes(k)),
-            is_favorite: this.db.practice_favorites!.some((f) => f.practice_id === x.id && f.user_id === uid) };
-        });
+    if (fn === 'count_practices_by_radius') {
+      const all = this.searchPractices({ ...a, p_radius_km: 50, p_limit: 300 }, uid);
+      return [5, 10, 25, 50].map((k) => {
+        const s = all.filter((x) => x.distance_km <= k);
+        return { radius_km: k, total: s.length, with_profile: s.filter((x) => x.has_profile).length, matches: s.filter((x) => x.matches).length };
+      });
     }
+    if (fn === 'search_practices') return this.searchPractices(a, uid);
     if (fn === 'complete_reminder') {
       const doneOn = String(a.p_done_on ?? this.today);
       const plus = (iso: string, n: number) => { const [y, m, d] = iso.split('-').map(Number) as [number, number, number]; return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };

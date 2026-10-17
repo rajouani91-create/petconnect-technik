@@ -804,6 +804,22 @@ export type Database = {
           title: string
         }
       }
+      count_practices_by_radius: {
+        Args: {
+          p_lat: number
+          p_lon: number
+          p_q?: string | null
+          p_services?: string[]
+          p_species?: string | null
+          p_titles?: string[]
+        }
+        Returns: {
+          matches: number
+          radius_km: number
+          total: number
+          with_profile: number
+        }[]
+      }
       create_pet_invite: {
         Args: { p_name: string; p_pet_ids: string[]; p_role: string }
         Returns: {
