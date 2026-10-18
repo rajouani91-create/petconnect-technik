@@ -115,6 +115,38 @@ export type Database = {
           },
         ]
       }
+      medication_doses: {
+        Row: {
+          given_at: string
+          given_by: string
+          id: string
+          medication_id: string
+          pet_id: string
+          scheduled_on: string
+          scheduled_time: string
+        }
+        Insert: {
+          given_at?: string
+          given_by?: string
+          id?: string
+          medication_id: string
+          pet_id: string
+          scheduled_on: string
+          scheduled_time: string
+        }
+        Update: {
+          [_ in never]: never
+        }
+        Relationships: [
+          {
+            foreignKeyName: "medication_doses_med"
+            columns: ["medication_id", "pet_id"]
+            isOneToOne: false
+            referencedRelation: "pet_medications"
+            referencedColumns: ["id", "pet_id"]
+          },
+        ]
+      }
       pet_documents: {
         Row: {
           category: string
@@ -266,6 +298,74 @@ export type Database = {
           token?: string
         }
         Relationships: []
+      }
+      pet_medications: {
+        Row: {
+          amount: number
+          created_at: string
+          ends_on: string | null
+          frequency: string
+          id: string
+          intake_hint: string
+          name: string
+          note: string | null
+          owner_id: string
+          pet_id: string
+          prescribed_by: string | null
+          reason: string | null
+          remind: boolean
+          source: string
+          starts_on: string
+          stopped_on: string | null
+          times: string[]
+          unit: string
+          updated_at: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          ends_on?: string | null
+          frequency?: string
+          id?: string
+          intake_hint?: string
+          name: string
+          note?: string | null
+          owner_id?: string
+          pet_id: string
+          prescribed_by?: string | null
+          reason?: string | null
+          remind?: boolean
+          source?: string
+          starts_on?: string
+          stopped_on?: string | null
+          times?: string[]
+          unit: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          ends_on?: string | null
+          frequency?: string
+          intake_hint?: string
+          name?: string
+          note?: string | null
+          prescribed_by?: string | null
+          reason?: string | null
+          remind?: boolean
+          starts_on?: string
+          stopped_on?: string | null
+          times?: string[]
+          unit?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pet_medications_pet_id_fkey"
+            columns: ["pet_id"]
+            isOneToOne: false
+            referencedRelation: "pets"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       pet_members: {
         Row: {

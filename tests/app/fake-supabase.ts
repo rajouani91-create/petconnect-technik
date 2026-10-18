@@ -13,6 +13,8 @@
  *  - Praxissuche: practices (nur aktive lesbar), practice_profiles, postal_codes, eigene Favoriten und Einladungswünsche,
  *    RPC geocode_place und search_practices (Haversine, Umkreis max. 100 km, matches nur mit Profil)
  *    seit 08b fehlertolerant wie in der Datenbank (normText/normQuery, Trigramm-Ähnlichkeit) und count_practices_by_radius
+ *  - Medikation (09): pet_medications (source owner/practice), medication_doses mit den Regeln aus dose_check,
+ *    sitter_view liefert active_medications. Zeitpunkt des Abhakens: `fake.now` (sonst die echte Uhr)
  *  - Unique-Regeln, Löschen mit Kaskade, Uhrzeiten als "HH:MM:SS"
  */
 import type { BrowserContext, Page, Route } from '@playwright/test';
@@ -68,7 +70,10 @@ class HttpError extends Error { constructor(public status: number, public code: 
 export class FakeSupabase {
   users: User[] = [];
   tokens = new Map<string, string>(); // access_token → user id
-  db: Record<string, Row[]> = { profiles: [], pets: [], pet_members: [], pet_invites: [], pet_invite_pets: [], routine_items: [], routine_done: [], weights: [], vaccinations: [], pet_documents: [], appointments: [], reminders: [], pet_insurances: [], insurance_claims: [], sitter_access: [], practices: [], practice_profiles: [], postal_codes: [], practice_favorites: [], practice_invite_requests: [] };
+  db: Record<string, Row[]> = { profiles: [], pets: [], pet_members: [], pet_invites: [], pet_invite_pets: [], routine_items: [], routine_done: [], weights: [], vaccinations: [], pet_documents: [], appointments: [], reminders: [], pet_insurances: [], insurance_claims: [], sitter_access: [], practices: [], practice_profiles: [], postal_codes: [], practice_favorites: [], practice_invite_requests: [], pet_medications: [], medication_doses: [] };
+  /** Uhr des „Servers“ für given_at (Playwright-clock wirkt nur im Browser) */
+  now: Date | null = null;
+  private nowIso() { return (this.now ?? new Date()).toISOString(); }
   files = new Map<string, { bytes: Buffer; type: string }>(); // "pet-photos/<pet>/<datei>"
   calls: { method: string; path: string; body?: unknown }[] = [];
   /** Nächste Anfrage an diese Tabelle schlägt fehl (Fehlerpfad testen) */
@@ -92,6 +97,20 @@ export class FakeSupabase {
     return p;
   }
   addMember(petId: unknown, u: User, role: 'carer' | 'viewer') { this.db.pet_members!.push({ pet_id: petId, user_id: u.id, role, created_at: new Date().toISOString() }); }
+  /** Medikament anlegen (auch source = 'practice', das die App selbst nie anlegt) – nur für Tests */
+  seedMedication(pet: Row, by: User, fields: Row): Row {
+    const row: Row = { id: randomUUID(), pet_id: pet.id, owner_id: by.id, source: 'owner', name: 'Präparat', amount: 1, unit: 'tablet', frequency: 'daily', times: ['08:00:00'],
+      intake_hint: 'none', note: null, reason: null, prescribed_by: null, starts_on: this.today, ends_on: null, stopped_on: null, remind: true,
+      created_at: this.nowIso(), updated_at: this.nowIso(), ...fields };
+    row.times = (row.times as string[]).map((x) => (x.length === 5 ? x + ':00' : x));
+    this.db.pet_medications!.push(row);
+    return row;
+  }
+  seedDose(med: Row, by: User, on: string, time: string, givenAt: string): Row {
+    const row: Row = { id: randomUUID(), medication_id: med.id, pet_id: med.pet_id, scheduled_on: on, scheduled_time: time.length === 5 ? time + ':00' : time, given_at: givenAt, given_by: by.id };
+    this.db.medication_doses!.push(row);
+    return row;
+  }
   /** Praxis (OSM-Grunddaten) mit optionalem Profil anlegen – nur für Tests */
   seedPractice(fields: Row, profile?: Row): Row {
     const row: Row = { id: randomUUID(), source: 'osm', name: 'Praxis', street: null, housenumber: null, postcode: null, city: null, lat: 0, lon: 0, phone: null, website: null, email: null, opening_hours: null, registered: false, active: true, ...fields };
@@ -133,7 +152,7 @@ export class FakeSupabase {
     switch (table) {
       case 'profiles': return r.id === uid || this.sharesPet(uid, String(r.id));
       case 'pets': return r.owner_id === uid || this.member(r.id, uid);
-      case 'pet_members': case 'routine_items': case 'weights': case 'vaccinations': case 'pet_documents': case 'appointments': case 'reminders': case 'pet_insurances': case 'insurance_claims': return this.member(r.pet_id, uid);
+      case 'pet_members': case 'routine_items': case 'weights': case 'vaccinations': case 'pet_documents': case 'appointments': case 'reminders': case 'pet_insurances': case 'insurance_claims': case 'pet_medications': case 'medication_doses': return this.member(r.pet_id, uid);
       case 'sitter_access': return this.editor(r.pet_id, uid);
       case 'practices': return r.active === true;
       case 'practice_profiles': case 'postal_codes': return true;
@@ -170,6 +189,12 @@ export class FakeSupabase {
         // Spaltenrechte: nur title, category, doc_date
         if (Object.keys(patch).some((k) => !['title', 'category', 'doc_date'].includes(k))) throw new HttpError(403, '42501', 'permission denied for table pet_documents');
         return this.editor(r.pet_id, uid);
+      case 'pet_medications': {
+        // Spaltenrechte: nur fachliche Spalten (nicht pet_id, owner_id, source)
+        const allowed = ['name', 'amount', 'unit', 'frequency', 'times', 'intake_hint', 'note', 'reason', 'prescribed_by', 'starts_on', 'ends_on', 'stopped_on', 'remind'];
+        if (Object.keys(patch).some((k) => !allowed.includes(k))) throw new HttpError(403, '42501', 'permission denied for table pet_medications');
+        return r.source === 'owner' && this.editor(r.pet_id, uid);
+      }
       case 'pet_members':
         if (r.role === 'owner' || !this.owner(r.pet_id, uid)) return false;
         if ('role' in patch && !['carer', 'viewer'].includes(String(patch.role))) throw new HttpError(403, '42501', 'new row violates row-level security policy');
@@ -181,7 +206,8 @@ export class FakeSupabase {
     switch (table) {
       case 'pets': return this.owner(r.id, uid);
       case 'routine_items': case 'weights': return this.editor(r.pet_id, uid);
-      case 'vaccinations': return this.editor(r.pet_id, uid) && r.source === 'owner';
+      case 'vaccinations': case 'pet_medications': return this.editor(r.pet_id, uid) && r.source === 'owner';
+      case 'medication_doses': return this.editor(r.pet_id, uid);
       case 'pet_documents': case 'appointments': case 'reminders': case 'pet_insurances': case 'insurance_claims': case 'sitter_access': return this.editor(r.pet_id, uid);
       case 'routine_done': return this.editor(this.itemPet(r.routine_item_id), uid);
       case 'pet_members': return r.role !== 'owner' && (r.user_id === uid || this.owner(r.pet_id, uid));
@@ -194,7 +220,8 @@ export class FakeSupabase {
     switch (table) {
       case 'pets': return r.owner_id === uid;
       case 'routine_items': case 'weights': return r.owner_id === uid && this.editor(r.pet_id, uid);
-      case 'vaccinations': return r.owner_id === uid && r.source === 'owner' && this.editor(r.pet_id, uid);
+      case 'vaccinations': case 'pet_medications': return r.owner_id === uid && r.source === 'owner' && this.editor(r.pet_id, uid);
+      case 'medication_doses': return r.given_by === uid && this.editor(r.pet_id, uid);
       case 'pet_documents': case 'appointments': case 'reminders': case 'pet_insurances': case 'insurance_claims': case 'sitter_access': return r.owner_id === uid && this.editor(r.pet_id, uid);
       case 'routine_done': return r.owner_id === uid && this.editor(this.itemPet(r.routine_item_id), uid);
       case 'practice_favorites': case 'practice_invite_requests': return r.user_id === uid && this.db.practices!.some((x) => x.id === r.practice_id);
@@ -294,6 +321,10 @@ export class FakeSupabase {
     const owner = this.db.profiles!.find((x) => x.id === p.owner_id)?.display_name ?? null;
     return { status: 'ok', sitter_name: a.sitter_name, valid_from: a.valid_from, valid_to: a.valid_to, feeding: a.feeding, care_notes: a.care_notes,
       pet: { name: p.name, species: p.species, species_other: p.species_other, breed: p.breed, chip_no: p.chip_no, allergies: p.allergies, medications: p.medications, deceased: p.deceased },
+      active_medications: this.db.pet_medications!
+        .filter((m) => m.pet_id === p.id && String(m.starts_on) <= String(a.valid_to) && String(m.stopped_on ?? m.ends_on ?? '9999-12-31') >= (String(a.valid_from) > this.today ? String(a.valid_from) : this.today))
+        .sort((x, y) => String(x.name).localeCompare(String(y.name)))
+        .map((m) => ({ name: m.name, amount: Number(m.amount), unit: m.unit, frequency: m.frequency, times: [...(m.times as string[])].sort().map((x) => x.slice(0, 5)), intake_hint: m.intake_hint, note: m.note, ends_on: m.ends_on })),
       owner_name: owner, owner_phone: p.owner_phone, emergency_contact: p.emergency_contact, vet_name: p.vet_name, vet_phone: p.vet_phone };
   }
 
@@ -530,7 +561,7 @@ export class FakeSupabase {
       const patch = this.normalize(table, body as Row);
       const target = visible().filter(match).filter((r) => this.canUpdate(table, r, uid, patch));
       for (const r of target) { const v = this.violates(table, { ...r, ...patch }, r); if (v && v !== 'dup') throw new HttpError(400, '23514', v); }
-      for (const r of target) Object.assign(r, patch, table === 'pets' ? { updated_at: new Date().toISOString() } : {});
+      for (const r of target) Object.assign(r, patch, table === 'pets' || table === 'pet_medications' ? { updated_at: new Date().toISOString() } : {});
       return wantRep ? respond(target) : json(204, undefined);
     }
     if (method === 'DELETE') {
@@ -571,12 +602,16 @@ export class FakeSupabase {
   private normalize(table: string, r: Row): Row {
     const out = { ...r };
     if (table === 'routine_items' && typeof out.time_of_day === 'string' && /^\d{2}:\d{2}$/.test(out.time_of_day)) out.time_of_day += ':00';
+    if (table === 'pet_medications' && Array.isArray(out.times)) out.times = (out.times as unknown[]).map((x) => (typeof x === 'string' && /^\d{2}:\d{2}$/.test(x) ? x + ':00' : x));
+    if (table === 'medication_doses' && typeof out.scheduled_time === 'string' && /^\d{2}:\d{2}$/.test(out.scheduled_time)) out.scheduled_time += ':00';
     return out;
   }
   private withDefaults(table: string, input: Row, uid: string): Row {
     const now = new Date().toISOString();
     const base: Row = { id: randomUUID(), created_at: now };
-    if (!['profiles', 'pet_members', 'pet_invite_pets', 'practice_favorites', 'practice_invite_requests'].includes(table)) base.owner_id = uid;
+    if (!['profiles', 'pet_members', 'pet_invite_pets', 'practice_favorites', 'practice_invite_requests', 'medication_doses'].includes(table)) base.owner_id = uid;
+    if (table === 'pet_medications') Object.assign(base, { source: 'owner', frequency: 'daily', times: [], intake_hint: 'none', note: null, reason: null, prescribed_by: null, starts_on: this.today, ends_on: null, stopped_on: null, remind: true, updated_at: now });
+    if (table === 'medication_doses') { delete base.created_at; Object.assign(base, { given_at: this.nowIso(), given_by: uid }); }
     if (table === 'practice_favorites' || table === 'practice_invite_requests') base.user_id = uid;
     if (table === 'pets') Object.assign(base, { deceased: false, updated_at: now, species_other: null, breed: null, sex: null, birth_date: null, chip_no: null, cat_outdoor: null, stable: null, allergies: null, medications: null, emergency_contact: null, photo_path: null, vet_name: null, vet_phone: null, owner_phone: null });
     if (table === 'pet_insurances') Object.assign(base, { holder_name: null, deductible: null, reimbursement_pct: null, submission: null, note: null });
@@ -674,6 +709,36 @@ export class FakeSupabase {
       if (r.repeat_days != null && !(Number.isInteger(r.repeat_days) && Number(r.repeat_days) >= 1 && Number(r.repeat_days) <= 3650)) return 'reminders_repeat_days_check';
       if (r.note != null && String(r.note).length > 1000) return 'reminders_note_check';
     }
+    if (table === 'pet_medications') {
+      const n = String(r.name ?? '').trim();
+      if (n.length < 1 || n.length > 80) return 'pet_medications_name_check';
+      const a = Number(r.amount);
+      if (!(a > 0 && a <= 1000) || Math.round(a * 100) !== a * 100) return 'pet_medications_amount_check';
+      if (!['tablet', 'capsule', 'ml', 'drop', 'pipette', 'puff', 'sachet', 'g', 'mg', 'application'].includes(String(r.unit))) return 'pet_medications_unit_check';
+      if (!['daily', 'as_needed'].includes(String(r.frequency))) return 'pet_medications_frequency_check';
+      if (!['none', 'with_food', 'empty_stomach'].includes(String(r.intake_hint))) return 'pet_medications_intake_hint_check';
+      if (!['owner', 'practice'].includes(String(r.source))) return 'pet_medications_source_check';
+      const times = (r.times ?? []) as string[];
+      if (!Array.isArray(times) || times.some((x) => !/^\d{2}:\d{2}:\d{2}$/.test(String(x)))) return 'pet_medications_times_format';
+      if (times.length > 4 || new Set(times).size !== times.length) return 'pet_medications_times';
+      if (r.frequency === 'daily' ? !(times.length >= 1 && times.length <= 4) : times.length !== 0) return 'pet_medications_times';
+      for (const [k, max] of [['note', 200], ['reason', 200], ['prescribed_by', 120]] as const) if (r[k] != null && String(r[k]).length > max) return `pet_medications_${k}_check`;
+      if (r.ends_on != null && String(r.ends_on) < String(r.starts_on)) return 'pet_medications_ends';
+      if (r.stopped_on != null) {
+        const minus1 = new Date(Date.parse(`${String(r.starts_on)}T00:00:00Z`) - 864e5).toISOString().slice(0, 10);
+        if (String(r.stopped_on) < minus1) return 'pet_medications_stopped';
+      }
+    }
+    if (table === 'medication_doses') {
+      const m = this.db.pet_medications!.find((x) => x.id === r.medication_id && x.pet_id === r.pet_id);
+      if (!m) return 'medication_doses_med';
+      const on = String(r.scheduled_on);
+      const minus7 = new Date(Date.parse(`${this.today}T00:00:00Z`) - 7 * 864e5).toISOString().slice(0, 10);
+      if (m.frequency !== 'daily' || !(m.times as string[]).includes(String(r.scheduled_time))) return 'dose_time_not_planned';
+      if (on > this.today || on < minus7) return 'dose_day_out_of_range';
+      if (on < String(m.starts_on) || (m.ends_on != null && on > String(m.ends_on)) || (m.stopped_on != null && on > String(m.stopped_on))) return 'dose_outside_period';
+      if (this.db.medication_doses!.some((x) => x !== self && x.medication_id === r.medication_id && x.scheduled_on === r.scheduled_on && x.scheduled_time === r.scheduled_time)) return 'dup';
+    }
     if ((table === 'practice_favorites' || table === 'practice_invite_requests') && this.db[table]!.some((x) => x !== self && x.user_id === r.user_id && x.practice_id === r.practice_id)) return 'dup';
     if (table === 'routine_done' && this.db.routine_done!.some((x) => x.routine_item_id === r.routine_item_id && x.done_on === r.done_on)) return 'dup';
     return null;
@@ -681,9 +746,10 @@ export class FakeSupabase {
   private cascadeDelete(table: string, r: Row) {
     this.db[table] = this.db[table]!.filter((x) => x !== r);
     if (table === 'pets') {
-      for (const t of ['routine_items', 'weights', 'vaccinations', 'insurance_claims', 'pet_insurances', 'sitter_access', 'pet_documents', 'appointments', 'reminders', 'pet_members', 'pet_invite_pets']) for (const c of this.db[t]!.filter((x) => x.pet_id === r.id)) this.cascadeDelete(t, c);
+      for (const t of ['routine_items', 'weights', 'vaccinations', 'insurance_claims', 'pet_insurances', 'sitter_access', 'pet_documents', 'appointments', 'reminders', 'pet_members', 'pet_invite_pets', 'pet_medications']) for (const c of this.db[t]!.filter((x) => x.pet_id === r.id)) this.cascadeDelete(t, c);
     }
     if (table === 'routine_items') this.db.routine_done = this.db.routine_done!.filter((x) => x.routine_item_id !== r.id);
+    if (table === 'pet_medications') this.db.medication_doses = this.db.medication_doses!.filter((x) => x.medication_id !== r.id);
     if (table === 'pet_invites') this.db.pet_invite_pets = this.db.pet_invite_pets!.filter((x) => x.invite_id !== r.id);
     if (table === 'pet_documents') for (const c of this.db.insurance_claims!) if (c.document_id === r.id) c.document_id = null;
     if (table === 'pet_insurances') this.db.insurance_claims = this.db.insurance_claims!.filter((c) => c.insurance_id !== r.id);
