@@ -15,6 +15,8 @@
  *    seit 08b fehlertolerant wie in der Datenbank (normText/normQuery, Trigramm-Ähnlichkeit) und count_practices_by_radius
  *  - Medikation (09): pet_medications (source owner/practice), medication_doses mit den Regeln aus dose_check,
  *    sitter_view liefert active_medications. Zeitpunkt des Abhakens: `fake.now` (sonst die echte Uhr)
+ *  - Push (10): push_subscriptions und notification_prefs (nur eigene Zeilen), RPC vapid_public_key (`fake.vapidKey`)
+ *    und register_push (gleiche Adresse → neues Konto übernimmt)
  *  - Unique-Regeln, Löschen mit Kaskade, Uhrzeiten als "HH:MM:SS"
  */
 import type { BrowserContext, Page, Route } from '@playwright/test';
@@ -70,7 +72,9 @@ class HttpError extends Error { constructor(public status: number, public code: 
 export class FakeSupabase {
   users: User[] = [];
   tokens = new Map<string, string>(); // access_token → user id
-  db: Record<string, Row[]> = { profiles: [], pets: [], pet_members: [], pet_invites: [], pet_invite_pets: [], routine_items: [], routine_done: [], weights: [], vaccinations: [], pet_documents: [], appointments: [], reminders: [], pet_insurances: [], insurance_claims: [], sitter_access: [], practices: [], practice_profiles: [], postal_codes: [], practice_favorites: [], practice_invite_requests: [], pet_medications: [], medication_doses: [] };
+  db: Record<string, Row[]> = { profiles: [], pets: [], pet_members: [], pet_invites: [], pet_invite_pets: [], routine_items: [], routine_done: [], weights: [], vaccinations: [], pet_documents: [], appointments: [], reminders: [], pet_insurances: [], insurance_claims: [], sitter_access: [], practices: [], practice_profiles: [], postal_codes: [], practice_favorites: [], practice_invite_requests: [], pet_medications: [], medication_doses: [], push_subscriptions: [], notification_prefs: [] };
+  /** Öffentlicher VAPID-Schlüssel (null = noch nicht eingerichtet, wie beim allerersten Lauf) */
+  vapidKey: string | null = 'BOr7mQ8w0r4Yp3FQnpxV6jbh5Rz9v5Ecd8XyO6rVb6Ff8w3S0pG3CpAuZ1QnY0Zl7k9mJgN7bW3fXyH2QzJk1Lc';
   /** Uhr des „Servers“ für given_at (Playwright-clock wirkt nur im Browser) */
   now: Date | null = null;
   private nowIso() { return (this.now ?? new Date()).toISOString(); }
@@ -156,7 +160,7 @@ export class FakeSupabase {
       case 'sitter_access': return this.editor(r.pet_id, uid);
       case 'practices': return r.active === true;
       case 'practice_profiles': case 'postal_codes': return true;
-      case 'practice_favorites': case 'practice_invite_requests': return r.user_id === uid;
+      case 'practice_favorites': case 'practice_invite_requests': case 'push_subscriptions': case 'notification_prefs': return r.user_id === uid;
       case 'routine_done': return this.member(this.itemPet(r.routine_item_id), uid);
       case 'pet_invites': return r.created_by === uid;
       case 'pet_invite_pets': return this.db.pet_invites!.some((i) => i.id === r.invite_id && i.created_by === uid);
@@ -189,6 +193,9 @@ export class FakeSupabase {
         // Spaltenrechte: nur title, category, doc_date
         if (Object.keys(patch).some((k) => !['title', 'category', 'doc_date'].includes(k))) throw new HttpError(403, '42501', 'permission denied for table pet_documents');
         return this.editor(r.pet_id, uid);
+      case 'notification_prefs':
+        if (Object.keys(patch).some((k) => !['medication', 'reminders', 'appointments', 'reminder_time'].includes(k))) throw new HttpError(403, '42501', 'permission denied for table notification_prefs');
+        return r.user_id === uid;
       case 'pet_medications': {
         // Spaltenrechte: nur fachliche Spalten (nicht pet_id, owner_id, source)
         const allowed = ['name', 'amount', 'unit', 'frequency', 'times', 'intake_hint', 'note', 'reason', 'prescribed_by', 'starts_on', 'ends_on', 'stopped_on', 'remind'];
@@ -212,7 +219,7 @@ export class FakeSupabase {
       case 'routine_done': return this.editor(this.itemPet(r.routine_item_id), uid);
       case 'pet_members': return r.role !== 'owner' && (r.user_id === uid || this.owner(r.pet_id, uid));
       case 'pet_invites': return r.created_by === uid;
-      case 'practice_favorites': case 'practice_invite_requests': return r.user_id === uid;
+      case 'practice_favorites': case 'practice_invite_requests': case 'push_subscriptions': return r.user_id === uid;
       default: return false;
     }
   }
@@ -222,6 +229,7 @@ export class FakeSupabase {
       case 'routine_items': case 'weights': return r.owner_id === uid && this.editor(r.pet_id, uid);
       case 'vaccinations': case 'pet_medications': return r.owner_id === uid && r.source === 'owner' && this.editor(r.pet_id, uid);
       case 'medication_doses': return r.given_by === uid && this.editor(r.pet_id, uid);
+      case 'push_subscriptions': case 'notification_prefs': return r.user_id === uid;
       case 'pet_documents': case 'appointments': case 'reminders': case 'pet_insurances': case 'insurance_claims': case 'sitter_access': return r.owner_id === uid && this.editor(r.pet_id, uid);
       case 'routine_done': return r.owner_id === uid && this.editor(this.itemPet(r.routine_item_id), uid);
       case 'practice_favorites': case 'practice_invite_requests': return r.user_id === uid && this.db.practices!.some((x) => x.id === r.practice_id);
@@ -349,6 +357,19 @@ export class FakeSupabase {
       return hits.sort((x, y) =>
         Number(np(y) === q) - Number(np(x) === q) || Number(np(y).startsWith(q)) - Number(np(x).startsWith(q)) ||
         similarity(np(y), q) - similarity(np(x), q) || String(x.place).localeCompare(String(y.place)) || String(x.postcode).localeCompare(String(y.postcode))).slice(0, 10);
+    }
+    if (fn === 'vapid_public_key') return this.vapidKey;
+    if (fn === 'register_push') {
+      const endpoint = String(a.p_endpoint ?? ''), p256dh = String(a.p_p256dh ?? ''), auth = String(a.p_auth ?? '');
+      const label = a.p_label == null ? null : String(a.p_label).slice(0, 80);
+      const probe = { endpoint, p256dh, auth };
+      const bad = this.violates('push_subscriptions', { ...probe, id: 'probe' }, this.db.push_subscriptions!.find((x) => x.endpoint === endpoint));
+      if (bad && bad !== 'dup') throw new HttpError(400, '23514', bad);
+      const old = this.db.push_subscriptions!.find((x) => x.endpoint === endpoint);
+      if (old) { Object.assign(old, { user_id: uid, p256dh, auth, device_label: label, failures: 0 }); return old.id; }
+      const row = { id: randomUUID(), user_id: uid, endpoint, p256dh, auth, device_label: label, created_at: this.nowIso(), last_ok_at: null, failures: 0 };
+      this.db.push_subscriptions!.push(row);
+      return row.id;
     }
     if (fn === 'count_practices_by_radius') {
       const all = this.searchPractices({ ...a, p_radius_km: 50, p_limit: 300 }, uid);
@@ -561,7 +582,7 @@ export class FakeSupabase {
       const patch = this.normalize(table, body as Row);
       const target = visible().filter(match).filter((r) => this.canUpdate(table, r, uid, patch));
       for (const r of target) { const v = this.violates(table, { ...r, ...patch }, r); if (v && v !== 'dup') throw new HttpError(400, '23514', v); }
-      for (const r of target) Object.assign(r, patch, table === 'pets' || table === 'pet_medications' ? { updated_at: new Date().toISOString() } : {});
+      for (const r of target) Object.assign(r, patch, table === 'pets' || table === 'pet_medications' || table === 'notification_prefs' ? { updated_at: new Date().toISOString() } : {});
       return wantRep ? respond(target) : json(204, undefined);
     }
     if (method === 'DELETE') {
@@ -604,12 +625,15 @@ export class FakeSupabase {
     if (table === 'routine_items' && typeof out.time_of_day === 'string' && /^\d{2}:\d{2}$/.test(out.time_of_day)) out.time_of_day += ':00';
     if (table === 'pet_medications' && Array.isArray(out.times)) out.times = (out.times as unknown[]).map((x) => (typeof x === 'string' && /^\d{2}:\d{2}$/.test(x) ? x + ':00' : x));
     if (table === 'medication_doses' && typeof out.scheduled_time === 'string' && /^\d{2}:\d{2}$/.test(out.scheduled_time)) out.scheduled_time += ':00';
+    if (table === 'notification_prefs' && typeof out.reminder_time === 'string' && /^\d{2}:\d{2}$/.test(out.reminder_time)) out.reminder_time += ':00';
     return out;
   }
   private withDefaults(table: string, input: Row, uid: string): Row {
     const now = new Date().toISOString();
     const base: Row = { id: randomUUID(), created_at: now };
-    if (!['profiles', 'pet_members', 'pet_invite_pets', 'practice_favorites', 'practice_invite_requests', 'medication_doses'].includes(table)) base.owner_id = uid;
+    if (!['profiles', 'pet_members', 'pet_invite_pets', 'practice_favorites', 'practice_invite_requests', 'medication_doses', 'push_subscriptions', 'notification_prefs'].includes(table)) base.owner_id = uid;
+    if (table === 'push_subscriptions') Object.assign(base, { user_id: uid, device_label: null, last_ok_at: null, failures: 0 });
+    if (table === 'notification_prefs') { delete base.id; delete base.created_at; Object.assign(base, { user_id: uid, medication: true, reminders: true, appointments: true, reminder_time: '09:00:00', updated_at: now }); }
     if (table === 'pet_medications') Object.assign(base, { source: 'owner', frequency: 'daily', times: [], intake_hint: 'none', note: null, reason: null, prescribed_by: null, starts_on: this.today, ends_on: null, stopped_on: null, remind: true, updated_at: now });
     if (table === 'medication_doses') { delete base.created_at; Object.assign(base, { given_at: this.nowIso(), given_by: uid }); }
     if (table === 'practice_favorites' || table === 'practice_invite_requests') base.user_id = uid;
@@ -708,6 +732,16 @@ export class FakeSupabase {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(String(r.due_on))) return 'reminders_due_on';
       if (r.repeat_days != null && !(Number.isInteger(r.repeat_days) && Number(r.repeat_days) >= 1 && Number(r.repeat_days) <= 3650)) return 'reminders_repeat_days_check';
       if (r.note != null && String(r.note).length > 1000) return 'reminders_note_check';
+    }
+    if (table === 'push_subscriptions') {
+      if (!/^https:\/\//.test(String(r.endpoint)) || String(r.endpoint).length > 1000) return 'push_subscriptions_endpoint_check';
+      if (String(r.p256dh ?? '').length < 20 || String(r.p256dh).length > 200) return 'push_subscriptions_p256dh_check';
+      if (String(r.auth ?? '').length < 8 || String(r.auth).length > 100) return 'push_subscriptions_auth_check';
+      if (this.db.push_subscriptions!.some((x) => x !== self && x.endpoint === r.endpoint)) return 'dup';
+    }
+    if (table === 'notification_prefs') {
+      if (!/^\d{2}:\d{2}:\d{2}$/.test(String(r.reminder_time))) return 'notification_prefs_time';
+      if (this.db.notification_prefs!.some((x) => x !== self && x.user_id === r.user_id)) return 'dup';
     }
     if (table === 'pet_medications') {
       const n = String(r.name ?? '').trim();

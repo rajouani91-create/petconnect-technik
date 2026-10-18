@@ -147,6 +147,31 @@ export type Database = {
           },
         ]
       }
+      notification_prefs: {
+        Row: {
+          appointments: boolean
+          medication: boolean
+          reminder_time: string
+          reminders: boolean
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          appointments?: boolean
+          medication?: boolean
+          reminder_time?: string
+          reminders?: boolean
+          updated_at?: string
+          user_id?: string
+        }
+        Update: {
+          appointments?: boolean
+          medication?: boolean
+          reminder_time?: string
+          reminders?: boolean
+        }
+        Relationships: []
+      }
       pet_documents: {
         Row: {
           category: string
@@ -639,6 +664,34 @@ export type Database = {
         }
         Relationships: []
       }
+      push_subscriptions: {
+        Row: {
+          auth: string
+          created_at: string
+          device_label: string | null
+          endpoint: string
+          failures: number
+          id: string
+          last_ok_at: string | null
+          p256dh: string
+          user_id: string
+        }
+        Insert: {
+          auth: string
+          created_at?: string
+          device_label?: string | null
+          endpoint: string
+          failures?: number
+          id?: string
+          last_ok_at?: string | null
+          p256dh: string
+          user_id?: string
+        }
+        Update: {
+          [_ in never]: never
+        }
+        Relationships: []
+      }
       reminders: {
         Row: {
           created_at: string
@@ -938,6 +991,10 @@ export type Database = {
         }[]
       }
       invite_preview: { Args: { p_token: string }; Returns: Json }
+      register_push: {
+        Args: { p_auth: string; p_endpoint: string; p_label?: string | null; p_p256dh: string }
+        Returns: string
+      }
       search_practices: {
         Args: {
           p_lat: number
@@ -974,6 +1031,7 @@ export type Database = {
         }[]
       }
       sitter_view: { Args: { p_token: string }; Returns: Json }
+      vapid_public_key: { Args: never; Returns: string | null }
     }
     Enums: {
       [_ in never]: never
