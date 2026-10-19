@@ -12,25 +12,35 @@ async function loadStrings(page: import('@playwright/test').Page): Promise<Dict>
   return page.evaluate(() => {
     const out: Record<string, Record<string, string>> = {};
     const all = STR;
-    for (const l of Object.keys(all)) {
-      out[l] = {};
-      for (const [k, v] of Object.entries(all[l])) if (typeof v === 'string') out[l][k] = v;
+    for (const [l, src] of Object.entries(all)) {
+      const d: Record<string, string> = {};
+      for (const [k, v] of Object.entries(src)) if (typeof v === 'string') d[k] = v;
+      out[l] = d;
     }
     return out;
   });
 }
 
-const LANGS = ['de', 'en', 'fr', 'ar', 'nl', 'es', 'ru', 'tr', 'sv', 'da', 'no'];
+const LANGS = ['de', 'en', 'fr', 'ar', 'nl', 'es', 'ru', 'tr', 'sv', 'da', 'no'] as const;
+type Lang = (typeof LANGS)[number];
+
+/** Texte einer Sprache; fehlt die Sprache, schlägt der Test mit klarer Meldung fehl */
+function dict(s: Dict, l: string): Record<string, string> {
+  const d = s[l];
+  expect(d, `Sprache ${l} fehlt`).toBeTruthy();
+  return d ?? {};
+}
 const placeholders = (s: string): string[] => (s.match(/\{\w+\}/g) ?? []).sort();
 
 test.describe('Sprachen – Vollständigkeit und Konsistenz', () => {
   test('alle 11 Sprachen haben jeden deutschen Text, mit denselben Platzhaltern', async ({ page }) => {
     const s = await loadStrings(page);
     const problems: string[] = [];
+    const de = dict(s, 'de');
     for (const l of LANGS) {
-      expect(s[l], `Sprache ${l} fehlt`).toBeTruthy();
-      for (const [k, v] of Object.entries(s.de)) {
-        const t = s[l][k];
+      const d = dict(s, l);
+      for (const [k, v] of Object.entries(de)) {
+        const t = d[k];
         if (t === undefined || t.trim() === '') { problems.push(`${l}.${k} fehlt`); continue; }
         if (placeholders(t).join() !== placeholders(v).join()) problems.push(`${l}.${k} Platzhalter`);
       }
@@ -41,39 +51,41 @@ test.describe('Sprachen – Vollständigkeit und Konsistenz', () => {
   test('keine englischen Reste aus neuen Funktionen in FR, AR, NL, ES, RU, TR', async ({ page }) => {
     const s = await loadStrings(page);
     const keys = ['hhSub', 'hhRoleCoX', 'hhRemoveAsk', 'bkHorizonX', 'cancelFree', 'docDelYes'];
-    for (const l of ['fr', 'ar', 'nl', 'es', 'ru', 'tr']) for (const k of keys) expect(s[l][k], `${l}.${k}`).not.toBe(s.en[k]);
+    const en = dict(s, 'en');
+    for (const l of ['fr', 'ar', 'nl', 'es', 'ru', 'tr']) for (const k of keys) expect(dict(s, l)[k], `${l}.${k}`).not.toBe(en[k]);
   });
 
   test('deutsche Texte siezen durchgehend', async ({ page }) => {
     const s = await loadStrings(page);
     const du = /\b(du|dein\w*|dir|dich|kannst|hast|musst|willst)\b|(^|[.!?:]\s+)(Wähle|Lege|Gib|Lade|Prüfe|Trage|Nimm|Fülle|Sprich|Teile|Ruf|Transportiere|Bitte (frage|wende|überweise))\b/;
     const chat = new Set(['c1', 'c2', 'c3', 'autoVet']);
-    const hits = Object.entries(s.de).filter(([k, v]) => !chat.has(k) && du.test(v)).map(([k]) => k);
+    const hits = Object.entries(dict(s, 'de')).filter(([k, v]) => !chat.has(k) && du.test(v)).map(([k]) => k);
     expect(hits).toEqual([]);
   });
 
   test('spanische Texte siezen (usted)', async ({ page }) => {
     const s = await loadStrings(page);
     const tu = /\b(tu|tus|tienes|puedes|quieres)\b|(^|[.!?:¿¡]\s*)(Elige|Añade|Selecciona|Observa|Introduce|No esperes|Llama|Ve ya)\b/;
-    const hits = Object.entries(s.es).filter(([, v]) => tu.test(v)).map(([k, v]) => `${k}: ${v}`);
+    const hits = Object.entries(dict(s, 'es')).filter(([, v]) => tu.test(v)).map(([k, v]) => `${k}: ${v}`);
     expect(hits).toEqual([]);
   });
 
   test('Absage unter 24 Stunden: in jeder Sprache Hinweis auf mögliche Kosten', async ({ page }) => {
     const s = await loadStrings(page);
-    const cost: Record<string, RegExp> = {
+    const cost: Record<Lang, RegExp> = {
       de: /Kosten/, en: /fee/, fr: /frais/, ar: /رسوم/, nl: /kosten/, es: /gastos/, ru: /сч[её]т|плат/, tr: /ücret/, sv: /avgift/, da: /gebyr/, no: /gebyr/,
     };
     for (const l of LANGS) {
-      expect(s[l].ownCancelLate, `${l}.ownCancelLate`).toMatch(cost[l]);
-      expect(s[l].cancelNote, `${l}.cancelNote`).toMatch(cost[l]);
-      expect(s[l].cancelNote, `${l}.cancelNote`).toContain('24');
+      const d = dict(s, l);
+      expect(d.ownCancelLate, `${l}.ownCancelLate`).toMatch(cost[l]);
+      expect(d.cancelNote, `${l}.cancelNote`).toMatch(cost[l]);
+      expect(d.cancelNote, `${l}.cancelNote`).toContain('24');
     }
   });
 
   test('Arabisch, Ergebnis GELB: Tier tierärztlich untersuchen lassen', async ({ page }) => {
     const s = await loadStrings(page);
-    expect(s.ar.rWarnT).toContain('الطبيب البيطري');
+    expect(dict(s, 'ar').rWarnT).toContain('الطبيب البيطري');
   });
 });
 

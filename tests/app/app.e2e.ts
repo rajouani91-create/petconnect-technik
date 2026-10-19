@@ -226,7 +226,9 @@ test.describe('Alltag', () => {
 
   test('Plan zeigt 6 Einträge und den Push-Hinweis', async ({ page }) => {
     await expect(page.locator('.routine-row')).toHaveCount(6);
-    await expect(page.getByText('Echte Push-Erinnerungen kommen')).toBeVisible();
+    // seit Auftrag 11 gibt es Push für den Tagesplan; auf diesem Gerät ist Push nicht aktiv → Link zu den Einstellungen
+    await expect(page.getByText('Erinnerungen kommen als Benachrichtigung aufs Handy, wenn sie unter Mehr → Benachrichtigungen aktiviert sind.')).toBeVisible();
+    await expect(page.locator('.push-note').getByRole('link', { name: 'Benachrichtigungen aktivieren' })).toHaveAttribute('href', '/mehr/benachrichtigungen');
   });
 
   test('Erinnerung einzeln aus, dann alle aus und wieder an', async ({ page }) => {
@@ -276,7 +278,8 @@ test.describe('Alltag', () => {
 
   test('Eintrag am Wochenende erscheint Freitag nicht unter Heute', async ({ page }) => {
     await page.getByRole('button', { name: 'Eintrag hinzufügen' }).click();
-    await page.getByLabel('Woran sollen wir Sie erinnern?').selectOption('med');
+    // seit Auftrag 11 ist „Medikament“ kein freier Eintrag mehr (eigener Test in tagesplan-medikation.e2e.ts)
+    await page.getByLabel('Woran sollen wir Sie erinnern?').selectOption('feed');
     await page.getByLabel('Uhrzeit').fill('11:00');
     await page.getByLabel('Wie oft?').selectOption('weekends');
     await page.getByRole('button', { name: 'Hinzufügen' }).click();

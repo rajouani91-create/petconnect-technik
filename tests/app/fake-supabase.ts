@@ -17,6 +17,8 @@
  *    sitter_view liefert active_medications. Zeitpunkt des Abhakens: `fake.now` (sonst die echte Uhr)
  *  - Push (10): push_subscriptions und notification_prefs (nur eigene Zeilen), RPC vapid_public_key (`fake.vapidKey`)
  *    und register_push (gleiche Adresse → neues Konto übernimmt)
+ *  - Tagesplan + Medikation (11): routine_items mit kind = 'med' nur noch lesbar/änderbar/löschbar (neu → 23514
+ *    routine_use_medication), notification_prefs.routine
  *  - Unique-Regeln, Löschen mit Kaskade, Uhrzeiten als "HH:MM:SS"
  */
 import type { BrowserContext, Page, Route } from '@playwright/test';
@@ -110,6 +112,13 @@ export class FakeSupabase {
     this.db.pet_medications!.push(row);
     return row;
   }
+  /** Tagesplan-Eintrag direkt anlegen (auch alte „med“-Einträge, die die Datenbank heute ablehnt) – nur für Tests */
+  seedRoutine(pet: Row, by: User, fields: Row): Row {
+    const row: Row = { id: randomUUID(), pet_id: pet.id, owner_id: by.id, kind: 'walk', time_of_day: '08:00:00', repeat: 'daily', reminder_on: true, label: null, created_at: this.nowIso(), ...fields };
+    if (String(row.time_of_day).length === 5) row.time_of_day += ':00';
+    this.db.routine_items!.push(row);
+    return row;
+  }
   seedDose(med: Row, by: User, on: string, time: string, givenAt: string): Row {
     const row: Row = { id: randomUUID(), medication_id: med.id, pet_id: med.pet_id, scheduled_on: on, scheduled_time: time.length === 5 ? time + ':00' : time, given_at: givenAt, given_by: by.id };
     this.db.medication_doses!.push(row);
@@ -194,7 +203,7 @@ export class FakeSupabase {
         if (Object.keys(patch).some((k) => !['title', 'category', 'doc_date'].includes(k))) throw new HttpError(403, '42501', 'permission denied for table pet_documents');
         return this.editor(r.pet_id, uid);
       case 'notification_prefs':
-        if (Object.keys(patch).some((k) => !['medication', 'reminders', 'appointments', 'reminder_time'].includes(k))) throw new HttpError(403, '42501', 'permission denied for table notification_prefs');
+        if (Object.keys(patch).some((k) => !['medication', 'routine', 'reminders', 'appointments', 'reminder_time'].includes(k))) throw new HttpError(403, '42501', 'permission denied for table notification_prefs');
         return r.user_id === uid;
       case 'pet_medications': {
         // Spaltenrechte: nur fachliche Spalten (nicht pet_id, owner_id, source)
@@ -633,7 +642,7 @@ export class FakeSupabase {
     const base: Row = { id: randomUUID(), created_at: now };
     if (!['profiles', 'pet_members', 'pet_invite_pets', 'practice_favorites', 'practice_invite_requests', 'medication_doses', 'push_subscriptions', 'notification_prefs'].includes(table)) base.owner_id = uid;
     if (table === 'push_subscriptions') Object.assign(base, { user_id: uid, device_label: null, last_ok_at: null, failures: 0 });
-    if (table === 'notification_prefs') { delete base.id; delete base.created_at; Object.assign(base, { user_id: uid, medication: true, reminders: true, appointments: true, reminder_time: '09:00:00', updated_at: now }); }
+    if (table === 'notification_prefs') { delete base.id; delete base.created_at; Object.assign(base, { user_id: uid, medication: true, routine: true, reminders: true, appointments: true, reminder_time: '09:00:00', updated_at: now }); }
     if (table === 'pet_medications') Object.assign(base, { source: 'owner', frequency: 'daily', times: [], intake_hint: 'none', note: null, reason: null, prescribed_by: null, starts_on: this.today, ends_on: null, stopped_on: null, remind: true, updated_at: now });
     if (table === 'medication_doses') { delete base.created_at; Object.assign(base, { given_at: this.nowIso(), given_by: uid }); }
     if (table === 'practice_favorites' || table === 'practice_invite_requests') base.user_id = uid;
@@ -660,6 +669,8 @@ export class FakeSupabase {
     if (table === 'routine_items') {
       if (!['walk', 'feed', 'med', 'litter', 'cage', 'terra', 'muck', 'own'].includes(String(r.kind))) return 'routine_items_kind_check';
       if (!['daily', 'weekdays', 'weekends'].includes(String(r.repeat))) return 'routine_items_repeat_check';
+      // Trigger routine_no_med (11): neue „Medikament“-Einträge und Umstellen auf „med“ abgelehnt, alte bleiben änderbar
+      if (r.kind === 'med' && (!self || self.kind !== 'med')) return 'routine_use_medication';
       if (r.label != null && String(r.label).length > 40) return 'routine_items_label_check';
       if (r.label != null && this.db.routine_items!.some((x) => x.pet_id === r.pet_id && x.kind === r.kind && x.time_of_day === r.time_of_day && x.label === r.label)) return 'dup';
     }

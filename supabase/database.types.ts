@@ -153,6 +153,7 @@ export type Database = {
           medication: boolean
           reminder_time: string
           reminders: boolean
+          routine: boolean
           updated_at: string
           user_id: string
         }
@@ -161,6 +162,7 @@ export type Database = {
           medication?: boolean
           reminder_time?: string
           reminders?: boolean
+          routine?: boolean
           updated_at?: string
           user_id?: string
         }
@@ -169,6 +171,7 @@ export type Database = {
           medication?: boolean
           reminder_time?: string
           reminders?: boolean
+          routine?: boolean
         }
         Relationships: []
       }

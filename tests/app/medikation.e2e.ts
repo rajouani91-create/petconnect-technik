@@ -78,7 +78,7 @@ test.describe('Tierakte: Medikation', () => {
     await fillMed(p, { name: 'Meloxicam', amount: '0,5', unit: 'ml', freq: '2× täglich', times: ['08:00', '19:30'], hint: 'mit Futter' });
     await expect(form(p).getByRole('group', { name: 'Wie oft?' }).getByRole('button', { name: '2× täglich' })).toHaveAttribute('aria-pressed', 'true');
     await form(p).getByRole('button', { name: 'Speichern' }).click();
-    await expect(status(p, 'Meloxicam eingetragen.')).toHaveCount(1);
+    await expect(status(p, 'Meloxicam eingetragen und steht im Tagesplan.')).toHaveCount(1);
     const r = row(card, 'Meloxicam');
     await expect(r).toContainText('0,5 ml · 2× täglich (08:00, 19:30 Uhr) · mit Futter');
     await expect(r).toContainText('von Ihnen');
@@ -161,7 +161,7 @@ test.describe('Tierakte: Medikation', () => {
     await expect(form(p).getByLabel(/^1\. Gabe/)).toHaveValue('08:00');
     await expect(form(p).getByLabel(/^2\. Gabe/)).toHaveValue('20:00');
     await form(p).getByRole('button', { name: 'Speichern' }).click();
-    await expect(status(p, 'Apoquel gespeichert.')).toHaveCount(1);
+    await expect(status(p, 'Apoquel gespeichert und steht im Tagesplan.')).toHaveCount(1);
     await expect(row(card, 'Apoquel')).toContainText('2 Tabletten · 2× täglich (08:00, 20:00 Uhr)');
     await expect(card.getByRole('button', { name: 'Apoquel bearbeiten' })).toBeFocused();
     // Beenden: ohne Rückfrage, Hinweis, unter „Beendet“
