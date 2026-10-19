@@ -274,14 +274,22 @@ test.describe('Hinweis und öffentliche Seiten', () => {
     await p.getByRole('link', { name: 'Datenschutz' }).click();
     await expect(p).toHaveURL(/\/datenschutz$/);
     await expect(p.getByRole('heading', { name: 'Datenschutz', level: 1 })).toBeVisible();
-    await expect(p.locator('#main')).toContainText('[BITTE ERGÄNZEN:');
+    // seit 10b ausgefüllt: keine Platzhalter mehr
+    for (const text of ['Ahmed Rajouani', 'Hessenring 104', '65428 Rüsselsheim am Main', 'info@petconnect24.com', 'Stand: Oktober 2026', 'Der Hessische Beauftragte für Datenschutz und Informationsfreiheit', 'Art. 6 Abs. 1 lit. b DSGVO', 'Alle Schriftarten sind lokal eingebunden; es wird keine Verbindung zu Google Fonts aufgebaut.', 'Namecheap, Inc. (USA)', '§ 25 Abs. 2 Nr. 2 TDDDG']) await expect(p.locator('#main'), text).toContainText(text);
+    await expect(p.locator('#main')).not.toContainText('BITTE ERGÄNZEN');
+    await expect(p.locator('#main').getByRole('heading', { level: 2 })).toHaveCount(14);
+    await expect(p.locator('#main').getByRole('link', { name: 'info@petconnect24.com' }).first()).toHaveAttribute('href', 'mailto:info@petconnect24.com');
     await expect(p.locator('#main')).toContainText('Region eu-central-1 (Frankfurt am Main, Deutschland)');
     await expect(p.locator('#main')).toContainText('Google Firebase Cloud Messaging');
-    await expect(p.locator('#main')).toContainText('PetConnect zeigt keine Werbung und verwendet kein Tracking.');
+    await expect(p.locator('#main')).toContainText('Es gibt keine Werbung, kein Tracking, keine Analyse-Dienste und keine Cookies zu Werbe- oder Analysezwecken.');
     await expect(p.locator('#main')).toContainText('© OpenStreetMap-Mitwirkende');
     await p.goto('/impressum');
     await expect(p.getByRole('heading', { name: 'Impressum', level: 1 })).toBeVisible();
-    await expect(p.locator('#main')).toContainText('[BITTE ERGÄNZEN: Name der verantwortlichen Person oder Firma]');
+    for (const text of ['Angaben gemäß § 5 Digitale-Dienste-Gesetz (DDG)', 'Ahmed Rajouani', 'Hessenring 104', '65428 Rüsselsheim am Main', 'Deutschland', 'Verbraucherstreitbeilegung', 'Haftung für Links']) await expect(p.locator('#main'), text).toContainText(text);
+    await expect(p.locator('#main')).not.toContainText('BITTE ERGÄNZEN');
+    await expect(p.locator('#main')).not.toContainText('Telefon');
+    await expect(p.locator('#main')).not.toContainText('Prototyp');
+    await expect(p.locator('#main').getByRole('link', { name: 'info@petconnect24.com' })).toHaveAttribute('href', 'mailto:info@petconnect24.com');
     await p.getByRole('link', { name: 'Zur Anmeldung' }).click();
     await expect(p).toHaveURL(/\/login$/);
     // unter „Mehr“ (angemeldet) und Konto löschen
@@ -291,9 +299,8 @@ test.describe('Hinweis und öffentliche Seiten', () => {
     await main(m).getByRole('button', { name: 'Konto löschen' }).click();
     const dlg = m.getByRole('dialog', { name: 'Konto löschen' });
     await expect(dlg).toContainText('Gelöscht werden Ihr Konto und alle Tiere, deren Besitzer:in Sie sind');
-    await expect(dlg).toContainText('Die E-Mail-Adresse für Anfragen ist noch nicht hinterlegt.');
     const href = await dlg.getByRole('link', { name: 'E-Mail vorbereiten' }).getAttribute('href');
-    expect(href).toBe(`mailto:?subject=${encodeURIComponent('PetConnect: Konto löschen')}&body=${encodeURIComponent('Bitte löschen Sie mein PetConnect-Konto (ahmed@test.invalid) mit allen zugehörigen Daten.')}`);
+    expect(href).toBe(`mailto:info@petconnect24.com?subject=${encodeURIComponent('PetConnect: Konto löschen')}&body=${encodeURIComponent('Bitte löschen Sie mein PetConnect-Konto (ahmed@test.invalid) mit allen zugehörigen Daten.')}`);
     await dlg.getByRole('button', { name: 'Abbrechen' }).click();
     await expect(dlg).toBeHidden();
     expect(fake.db.pets).toHaveLength(1); // nichts automatisch gelöscht

@@ -14,18 +14,18 @@ Die App ist eine installierbare PWA (Auftrag 10). Für den Play Store wird sie a
 
 ## Was Ahmed vor der Einreichung selbst tun muss
 
-1. **Impressum und Datenschutz ausfüllen und prüfen lassen.**
-   - Angaben stehen in `App/src/lib/legal.ts` (`LEGAL`: Name, Anschrift, E-Mail, Telefon). Solange ein Wert fehlt, zeigen die Seiten gut sichtbar „[BITTE ERGÄNZEN: …]“.
-   - Die übrigen Platzhalter stehen direkt in `App/src/pages/Legal.tsx` (Zwecke und Rechtsgrundlagen, Auftragsverarbeitung, Rechte, ggf. Registerangaben).
-   - **Diese Seiten müssen vor der Einreichung im Play Store vollständig ausgefüllt und rechtlich geprüft sein.** Die Datenschutz-URL (`https://<Ihre-Domain>/datenschutz`) wird in der Play Console verlangt.
-   - Die E-Mail-Adresse aus `LEGAL.email` wird auch für „Konto löschen“ verwendet. In der Play Console unter „Datensicherheit“ zusätzlich eine Webadresse für die Kontolöschung angeben (z. B. `/datenschutz`, Abschnitt „Konto löschen“).
-2. **App verpacken** mit [PWABuilder](https://www.pwabuilder.com) (Android → „Google Play“) oder Bubblewrap (`npx @bubblewrap/cli init --manifest https://<Ihre-Domain>/manifest.webmanifest`).
+1. **Impressum und Datenschutz: ausgefüllt am 18.10.2026 – rechtliche Prüfung steht noch aus.**
+   - Angaben in `App/src/lib/legal.ts` (`LEGAL`: Name, Anschrift, E-Mail, Stand), Texte in `App/src/pages/Legal.tsx`. Stellen, die eine Fachperson prüfen sollte, sind im Code mit `// RECHTLICH PRÜFEN: …` markiert.
+   - **Vor der Einreichung im Play Store rechtlich prüfen lassen.**
+   - Datenschutz-URL für die Play Console: `https://petconnect24.com/datenschutz`.
+   - „Konto löschen“ schreibt an `info@petconnect24.com`. In der Play Console unter „Datensicherheit“ als Webadresse für die Kontolöschung `https://petconnect24.com/datenschutz` (Abschnitt 11 „Konto löschen“) angeben.
+2. **App verpacken** mit [PWABuilder](https://www.pwabuilder.com) (Android → „Google Play“) oder Bubblewrap (`npx @bubblewrap/cli init --manifest https://petconnect24.com/manifest.webmanifest`).
    - Paketname: `com.petconnect24.app` (muss zu `assetlinks.json` passen).
    - Schlüssel (Keystore) sicher aufbewahren – **nicht** ins Repository.
 3. **Digital Asset Links eintragen** – sonst zeigt die App eine Adressleiste:
    - Play Console → Ihre App → **Testen und veröffentlichen → App-Integrität → App-Signatur** → Abschnitt „Zertifikat des App-Signaturschlüssels“ → **SHA-256-Fingerabdruck** kopieren.
    - In `App/public/.well-known/assetlinks.json` den Platzhalter `BITTE_SHA256_AUS_PLAY_CONSOLE_EINTRAGEN` durch diesen Wert ersetzen (Format `AB:CD:…`). Wer zusätzlich mit dem eigenen Upload-Schlüssel testet, trägt dessen SHA-256 als zweiten Eintrag in die Liste ein.
-   - Committen, auf Netlify veröffentlichen und prüfen: `https://<Ihre-Domain>/.well-known/assetlinks.json` muss die Datei als JSON liefern.
+   - Committen, auf Netlify veröffentlichen und prüfen: `https://petconnect24.com/.well-known/assetlinks.json` muss die Datei als JSON liefern.
 4. **Store-Eintrag**: Screenshots aus `App/public/screenshots/` verwenden (1080 × 2400) oder eigene machen; Kategorie „Gesundheit & Fitness“ bzw. „Lifestyle“; Fragebogen „Datensicherheit“ ausfüllen (Konto, Tierdaten, Gerätekennung für Push; keine Werbung, kein Tracking).
 5. **Push auf echtem Handy prüfen**: App installieren → Mehr → Benachrichtigungen → aktivieren → „Testnachricht anzeigen“. Echte Nachrichten verschickt die Edge Function `push-senden` (jede Minute über die Datenbank).
 

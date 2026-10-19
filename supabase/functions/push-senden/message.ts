@@ -2,9 +2,9 @@
 import { TEXTS } from './texts.ts';
 
 export type Job = {
-  kind: 'medication' | 'reminder' | 'appointment';
+  kind: 'medication' | 'reminder' | 'appointment' | 'routine';
   ref_id: string; slot: string; pet: string; title: string; url: string; language: string;
-  info: { amount?: number; unit?: string; hint?: string; time?: string; overdue?: boolean; location?: string | null };
+  info: { rkind?: string; label?: string | null; amount?: number; unit?: string; hint?: string; time?: string; overdue?: boolean; location?: string | null };
   subs: { id: string; endpoint: string; p256dh: string; auth: string }[];
 };
 
@@ -24,6 +24,10 @@ export function buildMessage(j: Job): { title: string; body: string; url: string
       body: `${T.med.replace('{t}', j.info.time ?? '')} · ${amount} ${a === 1 ? u[0] : u[1]}${hint}. ${T.ask}`,
       url: j.url, tag,
     };
+  }
+  if (j.kind === 'routine') {
+    const what = j.info.rkind === 'own' && j.info.label ? j.info.label : (T.k[j.info.rkind ?? ''] ?? j.info.label ?? '');
+    return { title: `${j.pet}: ${what}`, body: `${T.at.replace('{t}', j.info.time ?? '')}. ${T.done}`, url: j.url, tag };
   }
   if (j.kind === 'reminder') {
     return { title: `${j.pet}: ${j.title}`, body: j.info.overdue ? T.overdue : T.today, url: j.url, tag };
