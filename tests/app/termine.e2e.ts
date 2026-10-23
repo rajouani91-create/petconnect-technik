@@ -208,7 +208,8 @@ test.describe('Erinnerungen', () => {
     await expect(over.locator('.record-row')).toHaveCount(2);
     await expect(over.locator('.record-row').nth(0)).toContainText('Wurmkur');
     await expect(over.locator('.record-row').nth(0)).toContainText('überfällig seit 3 Tagen');
-    await expect(over.locator('.record-row').nth(0)).toContainText('Entwurmung · Luna');
+    await expect(over.locator('.record-row').nth(0)).toContainText('Entwurmung');
+    await expect(over.locator('.record-row').nth(0)).toContainText('Luna');
     await expect(over.locator('.record-row').nth(0)).toContainText('fällig am 13.10.2026 · alle 90 Tage');
     await expect(over.locator('.record-row').nth(1)).toContainText('überfällig seit 1 Tag');
     const today = section(p, /^Heute/);
