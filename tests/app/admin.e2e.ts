@@ -106,3 +106,29 @@ test('Reset-Link: Hinweis erscheint, Protokoll entsteht, kein Passwort sichtbar'
   const entry = fake.db.staff_audit!.find((x) => x.action === 'reset_link_sent');
   expect(entry).toMatchObject({ staff_id: (fake.user('support@test.invalid')).id, target_user_id: halter.id });
 });
+
+test('Support legt ein Ticket an und ändert den Status', async ({ browser }) => {
+  const { fake } = setup();
+  const page = await openAs(browser, fake, 'support@test.invalid', '/admin');
+  await main(page).locator('#ticket-sender').fill('anna@example.invalid');
+  await main(page).locator('#ticket-subject').fill('Passwort vergessen');
+  await main(page).locator('#ticket-body').fill('Ich komme nicht mehr in mein Konto.');
+  await main(page).getByRole('button', { name: 'Ticket anlegen' }).click();
+  await expect(main(page).getByRole('status')).toHaveText('Gespeichert.');
+  await expect(main(page).getByRole('heading', { name: 'Passwort vergessen' })).toBeVisible();
+  expect(fake.db.support_tickets!.length).toBe(1);
+
+  await main(page).locator('select[id^="ticket-status-"]').first().selectOption('closed');
+  await main(page).getByRole('button', { name: 'Speichern' }).first().click();
+  await expect(main(page).getByRole('status')).toHaveText('Gespeichert.');
+  expect(fake.db.support_tickets![0]!.status).toBe('closed');
+});
+
+test('Ticket ohne Betreff wird nicht angelegt', async ({ browser }) => {
+  const { fake } = setup();
+  const page = await openAs(browser, fake, 'support@test.invalid', '/admin');
+  await main(page).locator('#ticket-body').fill('Nur Text, kein Betreff');
+  await main(page).getByRole('button', { name: 'Ticket anlegen' }).click();
+  await expect(main(page).getByRole('status')).toHaveText('Bitte geben Sie Betreff und Inhalt an.');
+  expect(fake.db.support_tickets!.length).toBe(0);
+});
