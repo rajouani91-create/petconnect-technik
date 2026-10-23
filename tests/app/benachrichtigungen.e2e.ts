@@ -64,6 +64,8 @@ async function openAs(browser: Browser, fake: FakeSupabase, email: string, url: 
   page.on('pageerror', (e) => list.push(String(e)));
   await page.clock.setFixedTime(NOW);
   await page.goto('/login');
+  // Einführung vor der Anmeldung überspringen (falls sichtbar)
+  await page.getByRole('button', { name: 'Jetzt anmelden' }).click({ timeout: 2000 }).catch(() => {});
   await page.getByLabel('E-Mail').fill(email);
   await page.getByLabel('Passwort').fill(PW);
   await page.getByRole('button', { name: 'Anmelden' }).click();
@@ -271,6 +273,8 @@ test.describe('Hinweis und öffentliche Seiten', () => {
     errors.set(p, list);
     p.on('console', (m) => { if (m.type() === 'error') list.push(m.text()); });
     await p.goto('/login');
+    // Einführung vor der Anmeldung überspringen (falls sichtbar)
+    await p.getByRole('button', { name: 'Jetzt anmelden' }).click({ timeout: 2000 }).catch(() => {});
     await p.getByRole('link', { name: 'Datenschutz' }).click();
     await expect(p).toHaveURL(/\/datenschutz$/);
     await expect(p.getByRole('heading', { name: 'Datenschutz', level: 1 })).toBeVisible();

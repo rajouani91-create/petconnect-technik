@@ -18,6 +18,8 @@ async function start(page: Page, fake = new FakeSupabase()) {
 
 async function login(page: Page, email: string, pw = PW) {
   await page.goto('/login');
+  // Einführung vor der Anmeldung überspringen (falls sichtbar)
+  await page.getByRole('button', { name: 'Jetzt anmelden' }).click({ timeout: 2000 }).catch(() => {});
   await page.getByLabel('E-Mail').fill(email);
   await page.getByLabel('Passwort', { exact: false }).first().fill(pw);
   await page.getByRole('button', { name: 'Anmelden' }).click();
@@ -90,6 +92,8 @@ test.describe('Anmeldung', () => {
   test('Passwort vergessen schickt den Link und verrät nicht, ob das Konto existiert', async ({ page }) => {
     const fake = await start(page);
     await page.goto('/login');
+    // Einführung vor der Anmeldung überspringen (falls sichtbar)
+    await page.getByRole('button', { name: 'Jetzt anmelden' }).click({ timeout: 2000 }).catch(() => {});
     await page.getByRole('button', { name: 'Passwort vergessen?' }).click();
     await page.getByLabel('E-Mail').fill('wer@test.invalid');
     await page.getByRole('button', { name: 'Link senden' }).click();
