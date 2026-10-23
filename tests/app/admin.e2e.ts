@@ -93,3 +93,16 @@ test('Übersicht mit Zählungen ist nur für Admin sichtbar', async ({ browser }
   const support = await openAs(browser, fake, 'support@test.invalid', '/admin');
   await expect(main(support).getByRole('heading', { name: 'Übersicht' })).toHaveCount(0);
 });
+
+test('Reset-Link: Hinweis erscheint, Protokoll entsteht, kein Passwort sichtbar', async ({ browser }) => {
+  const { fake, halter } = setup();
+  const page = await openAs(browser, fake, 'support@test.invalid', '/admin');
+  await main(page).getByRole('searchbox', { name: 'Name, E-Mail oder Tiername' }).fill('Max');
+  await main(page).getByRole('button', { name: 'Suchen' }).click();
+  await main(page).getByRole('button', { name: /Max Halter/ }).click();
+  await main(page).getByRole('button', { name: 'Reset-Link senden' }).click();
+  await expect(main(page).getByRole('status')).toHaveText('Der Reset-Link wurde gesendet. Das Passwort sehen Sie nicht.');
+  await expect(main(page)).not.toContainText(PW);
+  const entry = fake.db.staff_audit!.find((x) => x.action === 'reset_link_sent');
+  expect(entry).toMatchObject({ staff_id: (fake.user('support@test.invalid')).id, target_user_id: halter.id });
+});

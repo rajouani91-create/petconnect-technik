@@ -316,6 +316,13 @@ export class FakeSupabase {
 
     try {
       if (url.pathname.startsWith('/storage/v1/')) return await this.storage(route, url, method, uid, body);
+      if (url.pathname === '/functions/v1/staff-reset-link') {
+        if (!this.staffRole(uid, 'support')) return json(403, { error: 'forbidden' });
+        const target = String(((body ?? {}) as Row).target ?? '');
+        if (!this.users.some((x) => x.id === target)) return json(404, { error: 'not_found' });
+        this.db.staff_audit!.push({ id: this.db.staff_audit!.length + 1, staff_id: uid, action: 'reset_link_sent', target_user_id: target, reason: null, created_at: this.nowIso() });
+        return json(200, { ok: true });
+      }
       if (url.pathname === '/rest/v1/rpc/sitter_view') return json(200, this.sitterView(String(((body ?? {}) as Row).p_token ?? '')));
       if (url.pathname.startsWith('/rest/v1/rpc/')) {
         if (!uid) return json(401, { code: '42501', message: 'permission denied' });
