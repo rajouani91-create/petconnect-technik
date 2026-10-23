@@ -28,7 +28,7 @@ async function openAs(browser: Browser, fake: FakeSupabase, email: string | null
     // Einführung vor der Anmeldung überspringen (falls sichtbar)
     await page.getByRole('button', { name: 'Jetzt anmelden' }).click({ timeout: 2000 }).catch(() => {});
     await page.getByLabel('E-Mail').fill(email);
-    await page.getByLabel('Passwort').fill(PW);
+    await page.getByRole('textbox', { name: 'Passwort', exact: true }).fill(PW);
     await page.getByRole('button', { name: 'Anmelden' }).click();
     await expect(page.locator('#main')).toBeVisible();
     await page.waitForLoadState('networkidle');
@@ -140,7 +140,7 @@ test.describe('Annehmen (eingeladene Person)', () => {
     await expect(p).toHaveURL(/\/login/);
     await expect(p.getByText('Melden Sie sich an oder registrieren Sie sich, um die Einladung anzunehmen.')).toBeVisible();
     await p.getByLabel('E-Mail').fill('kyra@test.invalid');
-    await p.getByLabel('Passwort').fill(PW);
+    await p.getByRole('textbox', { name: 'Passwort', exact: true }).fill(PW);
     await p.getByRole('button', { name: 'Anmelden' }).click();
     await expect(p).toHaveURL(new RegExp(`/einladung/${token}`));
     await expect(p.locator('#main')).toContainText('Ahmed lädt Sie ein,');
@@ -178,7 +178,7 @@ test.describe('Annehmen (eingeladene Person)', () => {
     const p = await openAs(browser, fake, null, `/einladung/${token}`);
     await expect.poll(() => p.evaluate(() => localStorage.getItem('pc-pending-invite'))).toBe(token);
     await p.getByLabel('E-Mail').fill('oma@test.invalid');
-    await p.getByLabel('Passwort').fill(PW);
+    await p.getByRole('textbox', { name: 'Passwort', exact: true }).fill(PW);
     await p.getByRole('button', { name: 'Anmelden' }).click();
     await expect(p).toHaveURL(/\/einladung\//);
     await expect(p.getByRole('button', { name: 'Annehmen' })).toBeVisible();

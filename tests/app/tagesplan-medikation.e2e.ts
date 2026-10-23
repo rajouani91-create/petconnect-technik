@@ -21,7 +21,7 @@ async function openAs(browser: Browser, fake: FakeSupabase, email: string, url: 
   // Einführung vor der Anmeldung überspringen (falls sichtbar)
   await page.getByRole('button', { name: 'Jetzt anmelden' }).click({ timeout: 2000 }).catch(() => {});
   await page.getByLabel('E-Mail').fill(email);
-  await page.getByLabel('Passwort').fill(PW);
+  await page.getByRole('textbox', { name: 'Passwort', exact: true }).fill(PW);
   await page.getByRole('button', { name: 'Anmelden' }).click();
   await expect(page.locator('#main')).toBeVisible();
   await page.waitForLoadState('networkidle');

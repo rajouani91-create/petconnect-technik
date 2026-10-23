@@ -46,6 +46,7 @@ test.describe('Anmeldung', () => {
     await start(page);
     await page.goto('/alltag');
     await expect(page).toHaveURL(/\/login$/);
+    await page.getByRole('button', { name: 'Jetzt anmelden' }).click({ timeout: 2000 }).catch(() => {});
     await expect(page.getByRole('heading', { name: 'Anmelden' })).toBeVisible();
     await expect(page.locator('html')).toHaveAttribute('lang', 'de');
   });
@@ -59,12 +60,12 @@ test.describe('Anmeldung', () => {
     await expect(name).toBeFocused();
     await name.fill('Ahmed');
     await page.getByLabel('E-Mail').fill('kein-at');
-    await page.getByLabel('Passwort').fill('kurz');
+    await page.getByRole('textbox', { name: 'Passwort', exact: true }).fill('kurz');
     await page.getByRole('button', { name: 'Konto erstellen' }).click();
     await expect(page.getByText('Bitte eine gültige E-Mail-Adresse eingeben.')).toBeVisible();
     await expect(page.getByText('Das Passwort braucht mindestens 8 Zeichen.')).toBeVisible();
     await page.getByLabel('E-Mail').fill('ahmed@test.invalid');
-    await page.getByLabel('Passwort').fill(PW);
+    await page.getByRole('textbox', { name: 'Passwort', exact: true }).fill(PW);
     await page.getByRole('button', { name: 'Konto erstellen' }).click();
     await expect(page.getByRole('heading', { name: 'Fast geschafft' })).toBeVisible();
     await expect(page.getByText('ahmed@test.invalid')).toBeVisible();
@@ -79,11 +80,11 @@ test.describe('Anmeldung', () => {
     await login(page, 'ahmed@test.invalid');
     await expect(page.getByRole('alert')).toContainText('Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse');
     fake.confirm('ahmed@test.invalid');
-    await page.getByLabel('Passwort').fill('falsch-falsch');
+    await page.getByRole('textbox', { name: 'Passwort', exact: true }).fill('falsch-falsch');
     await page.getByRole('button', { name: 'Anmelden' }).click();
     await expect(page.getByText('E-Mail-Adresse oder Passwort stimmt nicht.')).toBeVisible();
-    await expect(page.getByLabel('Passwort')).toBeFocused();
-    await page.getByLabel('Passwort').fill(PW);
+    await expect(page.getByRole('textbox', { name: 'Passwort', exact: true })).toBeFocused();
+    await page.getByRole('textbox', { name: 'Passwort', exact: true }).fill(PW);
     await page.getByRole('button', { name: 'Anmelden' }).click();
     await expect(page).toHaveURL(/\/tier\/neu$/);
     await expect(page.getByRole('heading', { name: 'Ihr erstes Tier' })).toBeVisible();
@@ -414,8 +415,9 @@ test('Link aufrufen ohne Anmeldung: nach dem Login zurück auf dieselbe Seite', 
   fake.seedPet(u, { name: 'Luna', species: 'dog' });
   await page.goto('/alltag');
   await expect(page).toHaveURL(/\/login$/);
+  await page.getByRole('button', { name: 'Jetzt anmelden' }).click({ timeout: 2000 }).catch(() => {});
   await page.getByLabel('E-Mail').fill('ahmed@test.invalid');
-  await page.getByLabel('Passwort').fill(PW);
+  await page.getByRole('textbox', { name: 'Passwort', exact: true }).fill(PW);
   await page.getByRole('button', { name: 'Anmelden' }).click();
   await expect(page).toHaveURL(/\/alltag$/);
 });

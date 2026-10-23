@@ -16,7 +16,7 @@ async function openAs(browser: Browser, fake: FakeSupabase, email: string, url: 
   await page.goto('/login');
   await page.getByRole('button', { name: 'Jetzt anmelden' }).click({ timeout: 2000 }).catch(() => {});
   await page.getByLabel('E-Mail').fill(email);
-  await page.getByLabel('Passwort').fill(PW);
+  await page.getByRole('textbox', { name: 'Passwort', exact: true }).fill(PW);
   await page.getByRole('button', { name: 'Anmelden' }).click();
   await expect(page.locator('#main')).toBeVisible();
   await page.waitForLoadState('networkidle');
@@ -50,14 +50,14 @@ test('zeigt die Zählungen des laufenden Monats', async ({ browser }) => {
   const page = await openAs(browser, fake, 'ahmed@test.invalid', '/mehr/monatsuebersicht');
   await expect(main(page).getByRole('heading', { name: 'Monatsübersicht', level: 1 })).toBeVisible();
   // 31 Tage × 2 Gaben = 62 geplant. Verpasst: 1.–15. Oktober (30 Gaben) minus 2 erledigte = 28.
-  await expect(main(page).getByText('62 geplant · 2 erledigt · 28 verpasst')).toBeVisible();
+  await expect(main(page).getByText('62 geplant · 2 erledigt · 28 verpasst', { exact: true })).toBeVisible();
   await expect(main(page).getByText('Veränderung: +0,2 kg')).toBeVisible();
 });
 
 test('Monat wechseln ändert die Zahlen', async ({ browser }) => {
   const { fake } = setup();
   const page = await openAs(browser, fake, 'ahmed@test.invalid', '/mehr/monatsuebersicht');
-  await expect(main(page).getByText('62 geplant')).toBeVisible();
+  await expect(main(page).getByText('62 geplant · 2 erledigt · 28 verpasst', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Vorheriger Monat' }).click();
   // Im September war die Gabe noch nicht geplant
   await expect(main(page).getByText('Keine Medikamente mit Erinnerung in diesem Monat.')).toBeVisible();
@@ -67,13 +67,13 @@ test('Monat wechseln ändert die Zahlen', async ({ browser }) => {
 test('Nur ansehen sieht dieselben Zahlen', async ({ browser }) => {
   const { fake } = setup();
   const page = await openAs(browser, fake, 'oma@test.invalid', '/mehr/monatsuebersicht');
-  await expect(main(page).getByText('62 geplant · 2 erledigt · 28 verpasst')).toBeVisible();
+  await expect(main(page).getByText('62 geplant · 2 erledigt · 28 verpasst', { exact: true })).toBeVisible();
 });
 
 test('Als PDF speichern ruft den Druckdialog auf und die Druckansicht zeigt nur den Inhalt', async ({ browser }) => {
   const { fake } = setup();
   const page = await openAs(browser, fake, 'ahmed@test.invalid', '/mehr/monatsuebersicht');
-  await expect(main(page).getByText('62 geplant')).toBeVisible();
+  await expect(main(page).getByText('62 geplant · 2 erledigt · 28 verpasst', { exact: true })).toBeVisible();
   await page.evaluate(() => {
     (window as unknown as { __printed: number }).__printed = 0;
     window.print = () => {
