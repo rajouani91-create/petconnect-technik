@@ -132,3 +132,21 @@ test('Ticket ohne Betreff wird nicht angelegt', async ({ browser }) => {
   await expect(main(page).getByRole('status')).toHaveText('Bitte geben Sie Betreff und Inhalt an.');
   expect(fake.db.support_tickets!.length).toBe(0);
 });
+
+test('Admin legt eine Ankündigung an, Nutzer sieht den Banner und schließt ihn', async ({ browser }) => {
+  const { fake } = setup();
+  fake.seedUser('nutzer@test.invalid', PW, 'Nina Nutzer');
+  const admin = await openAs(browser, fake, 'admin@test.invalid', '/admin');
+  await main(admin).locator('#ann-body').fill('Wartung am Sonntag von 8 bis 10 Uhr.');
+  await main(admin).locator('#ann-start').fill('2026-10-16T08:00');
+  await main(admin).locator('#ann-end').fill('2026-10-20T08:00');
+  await main(admin).getByRole('button', { name: 'Ankündigung speichern' }).click();
+  await expect(main(admin).getByRole('status')).toHaveText('Ankündigung gespeichert.');
+  expect(fake.db.announcements!.length).toBe(1);
+
+  const nutzer = await openAs(browser, fake, 'nutzer@test.invalid', '/');
+  await expect(nutzer.getByText('Wartung am Sonntag von 8 bis 10 Uhr.')).toBeVisible();
+  await nutzer.getByRole('button', { name: 'Schließen' }).click();
+  await expect(nutzer.getByText('Wartung am Sonntag von 8 bis 10 Uhr.')).toHaveCount(0);
+  expect(fake.db.announcement_dismissals!.length).toBe(1);
+});

@@ -74,7 +74,7 @@ class HttpError extends Error { constructor(public status: number, public code: 
 export class FakeSupabase {
   users: User[] = [];
   tokens = new Map<string, string>(); // access_token → user id
-  db: Record<string, Row[]> = { profiles: [], pets: [], pet_members: [], pet_invites: [], pet_invite_pets: [], routine_items: [], routine_done: [], weights: [], vaccinations: [], pet_documents: [], appointments: [], reminders: [], pet_insurances: [], insurance_claims: [], sitter_access: [], practices: [], practice_profiles: [], postal_codes: [], practice_favorites: [], practice_invite_requests: [], pet_medications: [], medication_doses: [], push_subscriptions: [], notification_prefs: [], pet_history: [], staff_roles: [], staff_audit: [], account_status: [], support_tickets: [] };
+  db: Record<string, Row[]> = { profiles: [], pets: [], pet_members: [], pet_invites: [], pet_invite_pets: [], routine_items: [], routine_done: [], weights: [], vaccinations: [], pet_documents: [], appointments: [], reminders: [], pet_insurances: [], insurance_claims: [], sitter_access: [], practices: [], practice_profiles: [], postal_codes: [], practice_favorites: [], practice_invite_requests: [], pet_medications: [], medication_doses: [], push_subscriptions: [], notification_prefs: [], pet_history: [], staff_roles: [], staff_audit: [], account_status: [], support_tickets: [], announcements: [], announcement_dismissals: [] };
   /** Öffentlicher VAPID-Schlüssel (null = noch nicht eingerichtet, wie beim allerersten Lauf) */
   vapidKey: string | null = 'BOr7mQ8w0r4Yp3FQnpxV6jbh5Rz9v5Ecd8XyO6rVb6Ff8w3S0pG3CpAuZ1QnY0Zl7k9mJgN7bW3fXyH2QzJk1Lc';
   /** Uhr des „Servers“ für given_at (Playwright-clock wirkt nur im Browser) */
@@ -168,6 +168,8 @@ export class FakeSupabase {
       case 'pet_members': case 'routine_items': case 'weights': case 'vaccinations': case 'pet_documents': case 'appointments': case 'reminders': case 'pet_insurances': case 'insurance_claims': case 'pet_medications': case 'medication_doses': return this.member(r.pet_id, uid);
       case 'staff_roles': return r.user_id === uid;
       case 'support_tickets': return this.staffRole(uid, 'support');
+      case 'announcements': return this.staffRole(uid, 'admin') || this.activeAnnouncement(r);
+      case 'announcement_dismissals': return r.user_id === uid;
       case 'staff_audit': return this.staffRole(uid, 'admin');
       case 'pet_history': return this.member(r.pet_id, uid);
       case 'sitter_access': return this.editor(r.pet_id, uid);
@@ -242,6 +244,8 @@ export class FakeSupabase {
     switch (table) {
       case 'pet_history': return this.editor(r.pet_id, uid);
       case 'support_tickets': return this.staffRole(uid, 'support');
+      case 'announcements': return this.staffRole(uid, 'admin');
+      case 'announcement_dismissals': return r.user_id === uid;
       case 'pets': return r.owner_id === uid;
       case 'routine_items': case 'weights': return r.owner_id === uid && this.editor(r.pet_id, uid);
       case 'vaccinations': case 'pet_medications': return r.owner_id === uid && r.source === 'owner' && this.editor(r.pet_id, uid);
@@ -366,6 +370,11 @@ export class FakeSupabase {
     const people = new Set(this.db.pet_members!.filter((m) => myPets.has(m.pet_id) && m.user_id !== owner).map((m) => m.user_id));
     const open = this.db.pet_invites!.filter((i) => i.created_by === owner && !i.accepted_at && String(i.expires_at) > new Date().toISOString()).length;
     return people.size + open;
+  }
+  /** Laufende Ankündigung: Beginn ≤ jetzt ≤ Ende (Uhr des Fakes). */
+  activeAnnouncement(r: Row): boolean {
+    const now = new Date(this.nowIso()).getTime();
+    return new Date(String(r.starts_at)).getTime() <= now && now <= new Date(String(r.ends_at)).getTime();
   }
   /** Mitarbeitenden-Rolle eines Kontos; 'support' gilt für Support und Admin, 'admin' nur für Admin. */
   staffRole(uid: string, min: 'support' | 'admin'): boolean {
