@@ -75,3 +75,24 @@ test('Zeitleiste zeigt Medikation, Gewicht und Impfung neueste zuerst, Filter wi
   await expect(items).toHaveCount(1);
   await expect(items.nth(0)).toContainText('4,25 kg');
 });
+
+test('Betreuung sieht weder Vorgeschichte noch Zeitleiste, nur Betreuungsdaten', async ({ browser }) => {
+  const { fake, ahmed, luna } = setup();
+  fake.db.pet_history!.push({ pet_id: luna.id, origin: 'breeder', past_illness: 'Geheime Vorerkrankung', updated_by: ahmed.id, updated_at: NOW.toISOString() });
+  fake.db.sitter_access!.push({
+    id: randomUUID(), pet_id: luna.id, owner_id: ahmed.id, sitter_name: 'Lea', valid_from: '2026-10-14', valid_to: '2026-10-20',
+    feeding: '2× täglich 200 g Trockenfutter', care_notes: 'Apoquel morgens mit Futter',
+    token: (randomUUID() + randomUUID()).replace(/-/g, ''), revoked_at: null, created_at: NOW.toISOString(),
+  });
+  const token = String(fake.db.sitter_access![fake.db.sitter_access!.length - 1]!.token);
+  const ctx = await browser.newContext({ locale: 'de-DE', timezoneId: 'Europe/Berlin', viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true });
+  await fake.installContext(ctx);
+  const page = await ctx.newPage();
+  await page.clock.setFixedTime(NOW);
+  await page.goto(`/betreuung/${token}`);
+  await expect(page.getByRole('heading', { name: 'Betreuung von Luna', level: 1 })).toBeVisible();
+  await expect(main(page).getByText('Apoquel morgens mit Futter')).toBeVisible();
+  await expect(main(page).getByText('Vorgeschichte')).toHaveCount(0);
+  await expect(main(page).getByText('Zeitleiste')).toHaveCount(0);
+  await expect(main(page).getByText('Geheime Vorerkrankung')).toHaveCount(0);
+});
