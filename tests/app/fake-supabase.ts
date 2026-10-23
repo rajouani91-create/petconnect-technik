@@ -74,7 +74,7 @@ class HttpError extends Error { constructor(public status: number, public code: 
 export class FakeSupabase {
   users: User[] = [];
   tokens = new Map<string, string>(); // access_token → user id
-  db: Record<string, Row[]> = { profiles: [], pets: [], pet_members: [], pet_invites: [], pet_invite_pets: [], routine_items: [], routine_done: [], weights: [], vaccinations: [], pet_documents: [], appointments: [], reminders: [], pet_insurances: [], insurance_claims: [], sitter_access: [], practices: [], practice_profiles: [], postal_codes: [], practice_favorites: [], practice_invite_requests: [], pet_medications: [], medication_doses: [], push_subscriptions: [], notification_prefs: [], pet_history: [] };
+  db: Record<string, Row[]> = { profiles: [], pets: [], pet_members: [], pet_invites: [], pet_invite_pets: [], routine_items: [], routine_done: [], weights: [], vaccinations: [], pet_documents: [], appointments: [], reminders: [], pet_insurances: [], insurance_claims: [], sitter_access: [], practices: [], practice_profiles: [], postal_codes: [], practice_favorites: [], practice_invite_requests: [], pet_medications: [], medication_doses: [], push_subscriptions: [], notification_prefs: [], pet_history: [], staff_roles: [], staff_audit: [], account_status: [] };
   /** Öffentlicher VAPID-Schlüssel (null = noch nicht eingerichtet, wie beim allerersten Lauf) */
   vapidKey: string | null = 'BOr7mQ8w0r4Yp3FQnpxV6jbh5Rz9v5Ecd8XyO6rVb6Ff8w3S0pG3CpAuZ1QnY0Zl7k9mJgN7bW3fXyH2QzJk1Lc';
   /** Uhr des „Servers“ für given_at (Playwright-clock wirkt nur im Browser) */
@@ -166,6 +166,8 @@ export class FakeSupabase {
       case 'profiles': return r.id === uid || this.sharesPet(uid, String(r.id));
       case 'pets': return r.owner_id === uid || this.member(r.id, uid);
       case 'pet_members': case 'routine_items': case 'weights': case 'vaccinations': case 'pet_documents': case 'appointments': case 'reminders': case 'pet_insurances': case 'insurance_claims': case 'pet_medications': case 'medication_doses': return this.member(r.pet_id, uid);
+      case 'staff_roles': return r.user_id === uid;
+      case 'staff_audit': return this.staffRole(uid, 'admin');
       case 'pet_history': return this.member(r.pet_id, uid);
       case 'sitter_access': return this.editor(r.pet_id, uid);
       case 'practices': return r.active === true;
@@ -355,6 +357,15 @@ export class FakeSupabase {
     const open = this.db.pet_invites!.filter((i) => i.created_by === owner && !i.accepted_at && String(i.expires_at) > new Date().toISOString()).length;
     return people.size + open;
   }
+  /** Mitarbeitenden-Rolle eines Kontos; 'support' gilt für Support und Admin, 'admin' nur für Admin. */
+  staffRole(uid: string, min: 'support' | 'admin'): boolean {
+    const row = this.db.staff_roles!.find((r) => r.user_id === uid);
+    if (!row) return false;
+    return min === 'support' || row.role === 'admin';
+  }
+  /** Mitarbeitende für Tests anlegen */
+  seedStaff(u: User, role: 'admin' | 'support') { this.db.staff_roles!.push({ user_id: u.id, role, created_at: this.nowIso() }); }
+
   private rpc(fn: string, a: Row, uid: string): unknown {
     const fail = (m: string, status = 400, code = 'P0001') => { throw new HttpError(status, code, m); };
     if (fn === 'geocode_place') {
@@ -369,6 +380,56 @@ export class FakeSupabase {
       return hits.sort((x, y) =>
         Number(np(y) === q) - Number(np(x) === q) || Number(np(y).startsWith(q)) - Number(np(x).startsWith(q)) ||
         similarity(np(y), q) - similarity(np(x), q) || String(x.place).localeCompare(String(y.place)) || String(x.postcode).localeCompare(String(y.postcode))).slice(0, 10);
+    }
+    if (fn === 'staff_stats') {
+      if (!this.staffRole(uid, 'admin')) fail('forbidden', 403, '42501');
+      const bySpecies: Record<string, number> = {};
+      for (const p of this.db.pets!) bySpecies[String(p.species)] = (bySpecies[String(p.species)] ?? 0) + 1;
+      return {
+        accounts: this.users.length,
+        profiles: this.db.profiles!.length,
+        accounts_with_pets: new Set(this.db.pets!.map((p) => p.owner_id)).size,
+        pets: this.db.pets!.length,
+        pets_by_species: bySpecies,
+        locked_accounts: this.db.account_status!.filter((x) => x.status === 'locked').length,
+        tickets_open: 0,
+        tickets_in_progress: 0,
+        tickets_closed: 0,
+      };
+    }
+    if (fn === 'staff_search_accounts') {
+      if (!this.staffRole(uid, 'support')) fail('forbidden', 403, '42501');
+      const q = String(a.q ?? '').trim().toLowerCase();
+      if (q.length < 3) fail('query_too_short', 400, '22023');
+      return this.users
+        .filter((u) => {
+          const name = String((this.db.profiles!.find((pr) => pr.id === u.id) as Row | undefined)?.display_name ?? '').toLowerCase();
+          const pets = this.db.pets!.filter((pt) => pt.owner_id === u.id).map((pt) => String(pt.name).toLowerCase());
+          return u.email.toLowerCase().includes(q) || name.includes(q) || pets.some((n) => n.includes(q));
+        })
+        .map((u) => {
+          const status = this.db.account_status!.find((x) => x.user_id === u.id)?.status ?? 'active';
+          return {
+            user_id: u.id,
+            email: u.email,
+            display_name: (this.db.profiles!.find((pr) => pr.id === u.id) as Row | undefined)?.display_name ?? null,
+            created_at: new Date().toISOString(),
+            status,
+            pets: this.db.pets!.filter((pt) => pt.owner_id === u.id).map((pt) => ({ name: pt.name, species: pt.species })),
+          };
+        });
+    }
+    if (fn === 'staff_set_account_status') {
+      if (!this.staffRole(uid, 'admin')) fail('forbidden', 403, '42501');
+      const target = String(a.target), status = String(a.new_status), reason = String(a.reason ?? '').trim();
+      if (!['active', 'locked'].includes(status)) fail('invalid_status', 400, '22023');
+      if (reason.length < 1 || reason.length > 200) fail('reason_required', 400, '22023');
+      if (target === uid) fail('cannot_change_own_account', 400, '22023');
+      const row = this.db.account_status!.find((x) => x.user_id === target);
+      if (row) Object.assign(row, { status, reason, changed_by: uid });
+      else this.db.account_status!.push({ user_id: target, status, reason, changed_by: uid, changed_at: this.nowIso() });
+      this.db.staff_audit!.push({ id: this.db.staff_audit!.length + 1, staff_id: uid, action: 'account_' + status, target_user_id: target, reason, created_at: this.nowIso() });
+      return null;
     }
     if (fn === 'vapid_public_key') return this.vapidKey;
     if (fn === 'register_push') {
