@@ -85,7 +85,7 @@ test.describe('Mehr zu … und Notfallkarte', () => {
     const { fake, luna } = setup();
     const p = await openAs(browser, fake, 'ahmed@test.invalid', '/tier');
     const more = main(p).locator('section').filter({ has: p.getByRole('heading', { name: 'Mehr zu Luna' }) });
-    await expect(more.getByRole('link')).toHaveText(['Notfallkarte', 'Versicherung', 'Betreuung', 'Gesundheitsakte (PDF)', 'Gewicht & Verlauf']);
+    await expect(more.getByRole('link')).toHaveText(['Notfallkarte', 'Versicherung', 'Betreuung', 'Gesundheitsakte (PDF)', 'Vorgeschichte', 'Gewicht & Verlauf']);
     await expect(main(p)).not.toContainText('Gesundheitsbereiche');
     await expect(main(p)).not.toContainText('Teilen & Freigaben');
     // Gewicht & Verlauf springt zum Reiter

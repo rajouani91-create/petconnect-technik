@@ -74,7 +74,7 @@ class HttpError extends Error { constructor(public status: number, public code: 
 export class FakeSupabase {
   users: User[] = [];
   tokens = new Map<string, string>(); // access_token → user id
-  db: Record<string, Row[]> = { profiles: [], pets: [], pet_members: [], pet_invites: [], pet_invite_pets: [], routine_items: [], routine_done: [], weights: [], vaccinations: [], pet_documents: [], appointments: [], reminders: [], pet_insurances: [], insurance_claims: [], sitter_access: [], practices: [], practice_profiles: [], postal_codes: [], practice_favorites: [], practice_invite_requests: [], pet_medications: [], medication_doses: [], push_subscriptions: [], notification_prefs: [] };
+  db: Record<string, Row[]> = { profiles: [], pets: [], pet_members: [], pet_invites: [], pet_invite_pets: [], routine_items: [], routine_done: [], weights: [], vaccinations: [], pet_documents: [], appointments: [], reminders: [], pet_insurances: [], insurance_claims: [], sitter_access: [], practices: [], practice_profiles: [], postal_codes: [], practice_favorites: [], practice_invite_requests: [], pet_medications: [], medication_doses: [], push_subscriptions: [], notification_prefs: [], pet_history: [] };
   /** Öffentlicher VAPID-Schlüssel (null = noch nicht eingerichtet, wie beim allerersten Lauf) */
   vapidKey: string | null = 'BOr7mQ8w0r4Yp3FQnpxV6jbh5Rz9v5Ecd8XyO6rVb6Ff8w3S0pG3CpAuZ1QnY0Zl7k9mJgN7bW3fXyH2QzJk1Lc';
   /** Uhr des „Servers“ für given_at (Playwright-clock wirkt nur im Browser) */
@@ -166,6 +166,7 @@ export class FakeSupabase {
       case 'profiles': return r.id === uid || this.sharesPet(uid, String(r.id));
       case 'pets': return r.owner_id === uid || this.member(r.id, uid);
       case 'pet_members': case 'routine_items': case 'weights': case 'vaccinations': case 'pet_documents': case 'appointments': case 'reminders': case 'pet_insurances': case 'insurance_claims': case 'pet_medications': case 'medication_doses': return this.member(r.pet_id, uid);
+      case 'pet_history': return this.member(r.pet_id, uid);
       case 'sitter_access': return this.editor(r.pet_id, uid);
       case 'practices': return r.active === true;
       case 'practice_profiles': case 'postal_codes': return true;
@@ -178,6 +179,7 @@ export class FakeSupabase {
   }
   private canUpdate(table: string, r: Row, uid: string, patch: Row): boolean {
     switch (table) {
+      case 'pet_history': return this.editor(r.pet_id, uid);
       case 'profiles': return r.id === uid;
       case 'pets':
         if ('owner_id' in patch && patch.owner_id !== r.owner_id) throw new HttpError(403, '42501', 'owner_change_not_allowed');
@@ -234,6 +236,7 @@ export class FakeSupabase {
   }
   private canInsert(table: string, r: Row, uid: string): boolean {
     switch (table) {
+      case 'pet_history': return this.editor(r.pet_id, uid);
       case 'pets': return r.owner_id === uid;
       case 'routine_items': case 'weights': return r.owner_id === uid && this.editor(r.pet_id, uid);
       case 'vaccinations': case 'pet_medications': return r.owner_id === uid && r.source === 'owner' && this.editor(r.pet_id, uid);
@@ -576,6 +579,15 @@ export class FakeSupabase {
       const ignoreDup = prefer.includes('resolution=ignore-duplicates');
       const out: Row[] = [];
       for (const input of list) {
+        if (prefer.includes('resolution=merge-duplicates') && table === 'pet_history') {
+          const existing = this.db[table]!.find((x) => x.pet_id === input.pet_id);
+          if (existing) {
+            if (!this.canUpdate(table, existing, uid, input)) throw new HttpError(403, '42501', `permission denied for table "${table}"`);
+            Object.assign(existing, input);
+            out.push(existing);
+            continue;
+          }
+        }
         const r = this.withDefaults(table, input, uid);
         if (!this.canInsert(table, r, uid)) throw new HttpError(403, '42501', `new row violates row-level security policy for table "${table}"`);
         const v = this.violates(table, r);
